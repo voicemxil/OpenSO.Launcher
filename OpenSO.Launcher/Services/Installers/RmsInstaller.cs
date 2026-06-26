@@ -24,6 +24,13 @@ public sealed class RmsInstaller : IComponentInstaller
 {
     public string Code => "RMS";
 
+    // Canonical community source for the FreeSO Remesh Package (forum thread #6152, last updated
+    // 2023-07-27, ~196 MB, ~2600 .fsom meshes + textures). FreeSO's own host (beta.freeso.org, which
+    // served the launcher's old "LauncherResourceCentral/3DModels") is decommissioned/NXDOMAIN, so this
+    // simfileshare mirror is the live source. Used only as a last-ditch fallback — operators should
+    // re-host the zip on their own infra (ResourceCentral["3DModels"] or a release asset) for reliability.
+    private const string CommunityRemeshMirror = "https://simfileshare.net/download/4048366/";
+
     private readonly LauncherConfig _config;
     private readonly InstallStateService _installState;
     private static readonly HttpClient Http = new();
@@ -46,16 +53,29 @@ public sealed class RmsInstaller : IComponentInstaller
         var zipUrl = await ResolveRemeshZipUrlAsync(ct)
             ?? throw new InvalidOperationException("No 3D mesh pack is available from the OpenSO server yet.");
 
-        var tempZip = Path.Combine(Path.GetTempPath(), $"openso-remesh-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.zip");
+        var work = Path.Combine(Path.GetTempPath(), $"openso-remesh-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
+        Directory.CreateDirectory(work);
+        var tempZip = Path.Combine(work, "remesh.zip");
+        var unzipDir = Path.Combine(work, "x");
         try
         {
             var dl = new DownloadService(zipUrl, tempZip);
-            await dl.RunAsync(Scale(progress, "rms", 0.00, 0.85, "Downloading 3D meshes… "), ct);
+            await dl.RunAsync(Scale(progress, "rms", 0.00, 0.80, "Downloading 3D meshes… "), ct);
 
-            // The package is a flat set of .fsom files; drop them straight into MeshReplace/.
+            await ZipExtractor.ExtractAsync(tempZip, unzipDir,
+                Scale(progress, "rms", 0.80, 0.92, "Unpacking… "), preservePermissions: false, ct);
+
+            // Normalize the layout. The community zip wraps the meshes as
+            // "FreeSO Remesh Package/MeshReplace/*.fsom"; a CI artifact may ship them flat. Either way,
+            // copy the MeshReplace contents into the client's Content/MeshReplace (where RCMeshProvider
+            // looks) — extracting the raw zip here would nest them under a wrapper folder and the game
+            // would find nothing.
+            var src = FindMeshSource(unzipDir)
+                ?? throw new InvalidOperationException("The downloaded package contained no .fsom meshes.");
+
+            progress.Report(new ProgressReport("rms", 0.93, "Installing 3D meshes…"));
             Directory.CreateDirectory(meshReplace);
-            await ZipExtractor.ExtractAsync(tempZip, meshReplace,
-                Scale(progress, "rms", 0.85, 0.99, "Installing 3D meshes… "), preservePermissions: false, ct);
+            CopyTree(src, meshReplace);
 
             // Mark it installed and record the source, so a future version check can compare/refresh.
             try { File.WriteAllText(Path.Combine(meshReplace, ".openso-remesh"), $"RMS\n{zipUrl}\n{DateTimeOffset.UtcNow:o}\n"); } catch { }
@@ -64,8 +84,30 @@ public sealed class RmsInstaller : IComponentInstaller
         }
         finally
         {
-            try { if (File.Exists(tempZip)) File.Delete(tempZip); } catch { }
+            try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Find the directory whose contents map onto Content/MeshReplace. Prefer a folder literally named
+    /// "MeshReplace" (the community package); otherwise the folder that directly holds the .fsom files
+    /// (a flat artifact). Returns null if the archive holds no meshes at all.
+    /// </summary>
+    private static string? FindMeshSource(string root)
+    {
+        var meshReplace = Directory.EnumerateDirectories(root, "MeshReplace", SearchOption.AllDirectories).FirstOrDefault();
+        if (meshReplace != null) return meshReplace;
+        var anyFsom = Directory.EnumerateFiles(root, "*.fsom", SearchOption.AllDirectories).FirstOrDefault();
+        return anyFsom != null ? Path.GetDirectoryName(anyFsom) : null;
+    }
+
+    private static void CopyTree(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (var dir in Directory.EnumerateDirectories(src, "*", SearchOption.AllDirectories))
+            Directory.CreateDirectory(Path.Combine(dst, Path.GetRelativePath(src, dir)));
+        foreach (var file in Directory.EnumerateFiles(src, "*", SearchOption.AllDirectories))
+            File.Copy(file, Path.Combine(dst, Path.GetRelativePath(src, file)), overwrite: true);
     }
 
     /// <summary>
@@ -124,7 +166,8 @@ public sealed class RmsInstaller : IComponentInstaller
         }
         catch { /* no URL */ }
 
-        return null;
+        // Last resort: the community mirror, so the feature works before operators re-host the package.
+        return CommunityRemeshMirror;
     }
 
     private static Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
