@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>OpenSO.Launcher.Tests</AssemblyName>
+    <!-- Avoid duplicate Program entry points by excluding the Avalonia bootstrap. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reuse the launcher's logic source directly (no GUI deps) so we can test headlessly. -->
+    <Compile Include="..\OpenSO.Launcher\Models\LauncherConfig.cs" Link="src\LauncherConfig.cs" />
+    <Compile Include="..\OpenSO.Launcher\Models\Components.cs" Link="src\Components.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\IGameService.cs" Link="src\IGameService.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\DownloadService.cs" Link="src\DownloadService.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\InstallStateService.cs" Link="src\InstallStateService.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\InstallOrchestrator.cs" Link="src\InstallOrchestrator.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Extraction\ZipExtractor.cs" Link="src\ZipExtractor.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Extraction\CabExtractor.cs" Link="src\CabExtractor.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\ElevationService.cs" Link="src\ElevationService.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\GameLauncher.cs" Link="src\GameLauncher.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\FsoInstaller.cs" Link="src\FsoInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\TsoInstaller.cs" Link="src\TsoInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\MonoInstaller.cs" Link="src\MonoInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\SdlInstaller.cs" Link="src\SdlInstaller.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+  </ItemGroup>
+
+</Project>

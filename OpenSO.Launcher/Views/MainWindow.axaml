@@ -1,0 +1,104 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:OpenSO.Launcher.ViewModels"
+        x:Class="OpenSO.Launcher.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Width="720" Height="580"
+        MinWidth="640" MinHeight="500"
+        Title="OpenSO Launcher"
+        Background="#0A1626"
+        WindowStartupLocation="CenterScreen">
+
+  <Grid RowDefinitions="Auto,*,Auto" Margin="0">
+
+    <!-- Header: brand bar -->
+    <Border Grid.Row="0" Background="#0E2138" Padding="22,18">
+      <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+        <!-- Mark: open ring + plumbob, drawn natively so no asset dependency at runtime -->
+        <Canvas Width="42" Height="42">
+          <Border Width="42" Height="42" CornerRadius="10" Background="#16314F"/>
+          <Path Stroke="#3FD9D0" StrokeThickness="3.2" StrokeLineCap="Round"
+                Data="M 29.5 9.5 A 14 14 0 1 1 12.5 9.5"/>
+          <Path Fill="White" Data="M 21 7 L 28 19 L 21 31 L 14 19 Z"/>
+          <Path Fill="#16314F" Data="M 21 12.5 L 24.5 19 L 21 25.5 L 17.5 19 Z"/>
+        </Canvas>
+        <TextBlock VerticalAlignment="Center" FontSize="24" FontWeight="Bold" Foreground="White">
+          <Run Text="Open"/><Run Text="SO" Foreground="#3FD9D0"/>
+        </TextBlock>
+      </StackPanel>
+    </Border>
+
+    <!-- Body -->
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="28,26" Spacing="18">
+
+      <TextBlock Text="The Sims Online, reborn" Foreground="#8FB4C2" FontSize="13"/>
+
+      <!-- Launcher self-update banner -->
+      <Border Background="#13313A" BorderBrush="#3FD9D0" BorderThickness="1" CornerRadius="10"
+              Padding="16,12" IsVisible="{Binding HasUpdate}">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="White" TextWrapping="Wrap">
+            <Run Text="Launcher update available: "/><Run Text="{Binding UpdateVersion}" Foreground="#3FD9D0" FontWeight="Bold"/>
+          </TextBlock>
+          <Button Grid.Column="1" Content="Update" Command="{Binding ApplyUpdateCommand}" IsEnabled="{Binding !Busy}"
+                  Background="#3FD9D0" Foreground="#073B3F" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
+        </Grid>
+      </Border>
+
+      <!-- Status cards -->
+      <Border Background="#0E2138" CornerRadius="10" Padding="18,14">
+        <Grid ColumnDefinitions="120,*">
+          <TextBlock Grid.Column="0" Text="Client" Foreground="#8FB4C2" FontWeight="SemiBold"/>
+          <TextBlock Grid.Column="1" Text="{Binding ClientState}" Foreground="White" TextWrapping="Wrap"/>
+        </Grid>
+      </Border>
+      <Border Background="#0E2138" CornerRadius="10" Padding="18,14">
+        <Grid ColumnDefinitions="120,*">
+          <TextBlock Grid.Column="0" Text="Game assets" Foreground="#8FB4C2" FontWeight="SemiBold"/>
+          <TextBlock Grid.Column="1" Text="{Binding AssetsState}" Foreground="White" TextWrapping="Wrap"/>
+        </Grid>
+      </Border>
+
+      <!-- Progress (only meaningful while busy) -->
+      <StackPanel Spacing="6" IsVisible="{Binding Busy}">
+        <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="8"
+                     Foreground="#3FD9D0" Background="#16314F"/>
+        <TextBlock Text="{Binding ProgressDetail}" Foreground="#8FB4C2" FontSize="12"/>
+      </StackPanel>
+
+      <!-- News (from openso.org/news/feed.json) -->
+      <TextBlock Text="News" Foreground="#8FB4C2" FontWeight="SemiBold" Margin="2,6,0,0"/>
+      <ItemsControl ItemsSource="{Binding NewsItems}" x:CompileBindings="False">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate>
+            <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="#0E2138"
+                    CornerRadius="8" Padding="14,10" Margin="0,0,0,8" Cursor="Hand"
+                    Command="{Binding DataContext.OpenNewsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                    CommandParameter="{Binding}">
+              <StackPanel>
+                <TextBlock Text="{Binding Title}" Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding Summary}" Foreground="#8FB4C2" FontSize="11" TextWrapping="Wrap" MaxLines="2"/>
+              </StackPanel>
+            </Button>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+    </ScrollViewer>
+
+    <!-- Footer: status line + primary action -->
+    <Border Grid.Row="2" Background="#0E2138" Padding="22,16">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                   Text="{Binding StatusLine}" Foreground="#8FB4C2" TextWrapping="NoWrap"/>
+        <Button Grid.Column="1"
+                Content="{Binding PlayButtonText}"
+                Command="{Binding PrimaryActionCommand}"
+                IsEnabled="{Binding !Busy}"
+                Background="#3FD9D0" Foreground="#073B3F"
+                FontWeight="Bold" Padding="26,10" CornerRadius="8"/>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

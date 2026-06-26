@@ -1,0 +1,22 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="OpenSO.Launcher.App"
+             RequestedThemeVariant="Dark">
+
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+
+  <Application.Resources>
+    <!-- OpenSO brand palette -->
+    <Color x:Key="Navy0">#16314F</Color>
+    <Color x:Key="Navy1">#0E2138</Color>
+    <Color x:Key="Navy2">#0A1626</Color>
+    <Color x:Key="Accent">#3FD9D0</Color>
+    <Color x:Key="AccentInk">#073B3F</Color>
+    <SolidColorBrush x:Key="NavyBrush" Color="#0A1626" />
+    <SolidColorBrush x:Key="Navy1Brush" Color="#0E2138" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#3FD9D0" />
+    <SolidColorBrush x:Key="MutedBrush" Color="#8FB4C2" />
+  </Application.Resources>
+</Application>
