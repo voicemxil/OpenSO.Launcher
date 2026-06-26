@@ -80,6 +80,7 @@ public sealed class InstallOrchestrator
     {
         "FSO" => new FsoInstaller(_config, RegisterInstall),
         "TSO" => new TsoInstaller(_config, RegisterInstall),
+        "RMS" => new RmsInstaller(_config, _installState),
         "Mono" => new MonoInstaller(_config),
         "SDL" => new SdlInstaller(_config),
         _ => null

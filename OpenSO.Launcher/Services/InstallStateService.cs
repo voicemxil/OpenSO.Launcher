@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Win32;
@@ -77,6 +78,31 @@ public sealed class InstallStateService
 
     public Task<InstallStatus> GetInstallStatusAsync(string code)
     {
+        // The Remesh package has no folder of its own: it lives inside the client's
+        // Content/MeshReplace as .fsom files (see RmsInstaller). It's installed iff that folder holds
+        // our marker or at least one mesh — so resolve the FSO dir and probe there.
+        if (code == "RMS")
+        {
+            var fso = ResolveComponentPath("FSO");
+            if (fso != null)
+            {
+                var meshReplace = Path.Combine(fso, "Content", "MeshReplace");
+                bool present = Directory.Exists(meshReplace) &&
+                    (File.Exists(Path.Combine(meshReplace, ".openso-remesh")) ||
+                     Directory.EnumerateFiles(meshReplace, "*.fsom").Any());
+                return Task.FromResult(new InstallStatus("RMS", present, present ? meshReplace : null));
+            }
+            return Task.FromResult(new InstallStatus("RMS", false, null));
+        }
+
+        var path = ResolveComponentPath(code);
+        return Task.FromResult(new InstallStatus(code, path != null, path));
+    }
+
+    /// <summary>Resolve a component's install dir: Windows registry first, then the known fallbacks
+    /// (install-root paths count only when the .openso-install marker is present).</summary>
+    private string? ResolveComponentPath(string code)
+    {
         string? path = null;
 
         if (OperatingSystem.IsWindows() && WinRegistry.TryGetValue(code, out var reg))
@@ -97,8 +123,7 @@ public sealed class InstallStateService
             }
         }
 
-        path = NormalizeLocalPath(path);
-        return Task.FromResult(new InstallStatus(code, path != null, path));
+        return NormalizeLocalPath(path);
     }
 
     private static string? NormalizeLocalPath(string? path)

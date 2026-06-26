@@ -146,7 +146,20 @@
               <TextBlock Grid.Column="2" Text="{Binding AssetsInstalled}" VerticalAlignment="Center" Foreground="#3FD9D0" FontWeight="Bold"/>
             </Grid>
           </Border>
-          <TextBlock Classes="sub" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform."/>
+          <Border Classes="card">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+              <TextBlock Grid.Column="0" Text="🧊" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
+              <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                <TextBlock Text="3D Mesh Pack" Foreground="White" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding RemeshState}" Classes="sub" TextWrapping="Wrap"/>
+              </StackPanel>
+              <Button Grid.Column="2" Content="Install" Command="{Binding InstallRemeshCommand}" IsEnabled="{Binding !Busy}"
+                      Background="#13243B" Foreground="#3FD9D0" FontWeight="SemiBold" Padding="14,7" CornerRadius="6" Margin="0,0,12,0"/>
+              <TextBlock Grid.Column="3" Text="{Binding RemeshInstalled}" VerticalAlignment="Center" Foreground="#3FD9D0" FontWeight="Bold"/>
+            </Grid>
+          </Border>
+
+          <TextBlock Classes="sub" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform. The 3D Mesh Pack is optional — it adds higher-quality 3D models used when 3D mode is enabled in Settings."/>
         </StackPanel>
       </ScrollViewer>
 
@@ -182,6 +195,7 @@
               <StackPanel Spacing="5">
                 <TextBlock Text="3D Mode" Foreground="White" FontWeight="SemiBold"/>
                 <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
+                <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
               </StackPanel>
               <StackPanel Spacing="5">
                 <TextBlock Text="Refresh rate (Hz)" Foreground="White" FontWeight="SemiBold"/>

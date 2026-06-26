@@ -53,6 +53,8 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _busy;
     [ObservableProperty] private bool _clientInstalled;
     [ObservableProperty] private bool _assetsInstalled;
+    [ObservableProperty] private bool _remeshInstalled;
+    [ObservableProperty] private string _remeshState = "Checking…";
     [ObservableProperty] private string? _updateVersion;
     [ObservableProperty] private string _clock = "";
 
@@ -94,7 +96,13 @@ public partial class MainViewModel : ObservableObject
     partial void OnUpdateVersionChanged(string? value) => OnPropertyChanged(nameof(HasUpdate));
 
     partial void OnGraphicsModeChanged(string value) { _settings.GraphicsMode = value; _settings.Save(); }
-    partial void OnThreeDModeChanged(string value) { _settings.Enable3D = value == "Enabled"; _settings.Save(); }
+    partial void OnThreeDModeChanged(string value)
+    {
+        _settings.Enable3D = value == "Enabled"; _settings.Save();
+        // 3D mode looks far better with the remesh pack — nudge if it's on but the pack isn't there.
+        if (_settings.Enable3D && ClientInstalled && !RemeshInstalled && !Busy)
+            Notify("3D mode is on. Install the 3D mesh pack (Installer tab) for higher-quality models.");
+    }
     partial void OnRefreshRateChanged(int value) { _settings.RefreshRate = value; _settings.Save(); }
     partial void OnLiveNotificationsChanged(string value) { _settings.LiveNotifications = value == "Enabled"; _settings.Save(); }
     partial void OnClosingBehaviorChanged(string value) { _settings.ClosingBehavior = value; _settings.Save(); }
@@ -114,12 +122,15 @@ public partial class MainViewModel : ObservableObject
         var installed = await _installState.GetInstalledAsync();
         var fso = installed.FirstOrDefault(s => s.Code == "FSO");
         var tso = installed.FirstOrDefault(s => s.Code == "TSO");
+        var rms = installed.FirstOrDefault(s => s.Code == "RMS");
 
         ClientInstalled = fso?.IsInstalled == true;
         AssetsInstalled = tso?.IsInstalled == true;
+        RemeshInstalled = rms?.IsInstalled == true;
         _fsoPath = ClientInstalled ? fso!.Path : null;
         ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
         AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
+        RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
         StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
     }
 
@@ -191,6 +202,29 @@ public partial class MainViewModel : ObservableObject
             Notify("Install complete.");
         }
         catch (Exception ex) { Notify("Install failed: " + ex.Message); }
+        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+    }
+
+    [RelayCommand]
+    private async Task InstallRemeshAsync()
+    {
+        if (Busy) return;
+        if (!ClientInstalled) { Notify("Install the OpenSO client first, then add the 3D mesh pack."); Section = "INSTALLER"; return; }
+
+        Busy = true; Progress = 0; Section = "DOWNLOADS";
+        Notify("Installing the 3D mesh pack…");
+        try
+        {
+            var reporter = new Progress<ProgressReport>(r =>
+            {
+                Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
+                StatusLine = $"{r.Stage}: {r.Detail}";
+            });
+            await _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
+                onUnsupported: code => Notify($"{code} installer not available."));
+            Notify("3D mesh pack installed.");
+        }
+        catch (Exception ex) { Notify("3D mesh pack failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
