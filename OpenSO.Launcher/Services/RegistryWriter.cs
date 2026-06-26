@@ -45,21 +45,23 @@ public sealed class RegistryWriter
     {
         // Normalize to a directory path (the games store InstallDir as the folder).
         installDir = Path.GetFullPath(installDir);
-        try
+        // Write BOTH registry views: the game's TSO locator opens HKLM with RegistryView.Registry32
+        // (WOW6432Node), while the launcher's own detection reads RegistryView.Default. Writing only one
+        // leaves the other reader blind — which is exactly why the game couldn't find a launcher-registered
+        // TSO. (Requires elevation; non-fatal if denied — the relative-path layout + marker still work.)
+        bool wroteAny = false;
+        foreach (var view in new[] { RegistryView.Registry32, RegistryView.Default })
         {
-            using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Default);
-            using var key = hklm.CreateSubKey(subKey, writable: true);
-            key.SetValue("InstallDir", installDir, RegistryValueKind.String);
-            return true;
+            try
+            {
+                using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using var key = hklm.CreateSubKey(subKey, writable: true);
+                key.SetValue("InstallDir", installDir, RegistryValueKind.String);
+                wroteAny = true;
+            }
+            catch (UnauthorizedAccessException) { return false; } // not elevated -> caller uses the marker fallback
+            catch { /* try the other view */ }
         }
-        catch (UnauthorizedAccessException)
-        {
-            // No HKLM write access (not elevated). Caller falls back to the per-user marker file.
-            return false;
-        }
-        catch
-        {
-            return false;
-        }
+        return wroteAny;
     }
 }

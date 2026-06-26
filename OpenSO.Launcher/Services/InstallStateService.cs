@@ -43,7 +43,7 @@ public sealed class InstallStateService
         // The launcher installs each component to <installRoot>/<CODE> and drops a .openso-install
         // marker there — check that first so a fresh install is detected immediately.
         if (_installRoot != null)
-            yield return Path.Combine(_installRoot, code);
+            yield return Path.Combine(_installRoot, Models.Components.InstallDirName(code));
 
         switch (code)
         {
@@ -91,7 +91,7 @@ public sealed class InstallStateService
                 // An install-root path (<root>/<code>) counts only if the install actually completed,
                 // marked with a .openso-install file — avoids false positives on a partial dir.
                 bool isInstallRoot = _installRoot != null &&
-                    string.Equals(Path.GetFullPath(fb), Path.GetFullPath(Path.Combine(_installRoot, code)), StringComparison.Ordinal);
+                    string.Equals(Path.GetFullPath(fb), Path.GetFullPath(Path.Combine(_installRoot, Models.Components.InstallDirName(code))), StringComparison.Ordinal);
                 bool ok = isInstallRoot ? File.Exists(Path.Combine(fb, ".openso-install")) : PathExists(fb);
                 if (ok) { path = fb; break; }
             }

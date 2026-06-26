@@ -24,6 +24,14 @@ public static class Components
     };
 
     /// <summary>
+    /// Folder name a component installs into under the install root. TSO must land in "The Sims Online"
+    /// (with a TSOClient subfolder) because the game's locator looks for "../The Sims Online/TSOClient/"
+    /// relative to the client's working directory FIRST — so a sibling layout makes it findable with no
+    /// registry/admin. Everything else just uses its code.
+    /// </summary>
+    public static string InstallDirName(string code) => code == "TSO" ? "The Sims Online" : code;
+
+    /// <summary>
     /// Dependency graph (constants.js `dependencies`). Platform-sensitive: on macOS/Linux the
     /// client needs Mono + SDL; on Windows it needs OpenAL. Resolve recursively before installing.
     /// </summary>

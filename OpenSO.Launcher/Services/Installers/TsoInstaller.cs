@@ -69,10 +69,15 @@ public sealed class TsoInstaller : IComponentInstaller
             if (!File.Exists(firstCab))
                 throw new FileNotFoundException("Could not find Data1.cab in the TSO distribution.");
 
-            await CabExtractor.ExtractAsync(firstCab, installPath,
+            // Extract into a TSOClient subfolder: the game looks for tuning.dat at "<install>/TSOClient/"
+            // (its first check is "../The Sims Online/TSOClient/" relative to the client's working dir, and the
+            // Maxis registry InstallDir is this folder + "\TSOClient\"). installPath is the "The Sims Online"
+            // dir (Components.InstallDirName), so this lands the game files where the locator finds them.
+            var tsoClientDir = Path.Combine(installPath, "TSOClient");
+            await CabExtractor.ExtractAsync(firstCab, tsoClientDir,
                 Scale(progress, "tso", 0.72, 0.97, "Extracting game files… "), purge: true, ct);
 
-            // Step 5: register the Maxis/TSO install.
+            // Step 5: register the Maxis/TSO install (InstallDir = the "The Sims Online" parent of TSOClient).
             progress.Report(new ProgressReport("tso", 0.98, "Registering install…"));
             _registerInstall?.Invoke(Code, installPath);
 

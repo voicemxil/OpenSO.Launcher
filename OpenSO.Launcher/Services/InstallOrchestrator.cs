@@ -69,7 +69,7 @@ public sealed class InstallOrchestrator
                 continue;
             }
 
-            var dir = Path.Combine(installRoot, component);
+            var dir = Path.Combine(installRoot, Components.InstallDirName(component));
             progress.Report(new ProgressReport(component, 0, $"Installing {Components.Names.GetValueOrDefault(component, component)}…"));
             await installer.InstallAsync(dir, progress, ct);
         }
