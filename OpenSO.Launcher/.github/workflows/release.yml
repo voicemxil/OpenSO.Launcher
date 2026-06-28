@@ -1,0 +1,91 @@
+name: Release launcher
+
+# Cut a release by pushing a semver tag: `git tag v0.1.0 && git push origin v0.1.0`
+# (or run manually via the Actions tab, supplying the version). Builds a self-contained launcher for each
+# platform, zips it with the RID in the name, and publishes a GitHub Release. The launcher's
+# SelfUpdateService reads releases/latest, downloads the .zip whose name contains its RID, and swaps itself
+# in — so these RID-named zips are exactly what self-update consumes.
+
+on:
+  push:
+    tags: ["v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v0.1.0"
+        required: true
+        default: "v0.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: ubuntu-latest,  rid: linux-x64 }
+          - { os: macos-latest,   rid: osx-arm64 }
+          - { os: macos-13,       rid: osx-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then V="${GITHUB_REF_NAME}"; else V="${{ github.event.inputs.version }}"; fi
+          # Strip a leading v for the assembly version (SelfUpdateService compares assembly Major.Minor.Build).
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+          echo "num=${V#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish (${{ matrix.rid }})
+        shell: bash
+        run: |
+          dotnet publish OpenSO.Launcher.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:Version=${{ steps.ver.outputs.num }} -p:PublishSingleFile=false -o publish
+
+      - name: Zip (Unix)
+        if: runner.os != 'Windows'
+        run: ( cd publish && zip -r "../OpenSO.Launcher-${{ matrix.rid }}.zip" . )
+
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath "OpenSO.Launcher-${{ matrix.rid }}.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-${{ matrix.rid }}
+          path: OpenSO.Launcher-${{ matrix.rid }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: launcher-*
+          merge-multiple: true
+
+      - name: Resolve tag
+        id: ver
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then V="${GITHUB_REF_NAME}"; else V="${{ github.event.inputs.version }}"; fi
+          echo "tag=$V" >> "$GITHUB_OUTPUT"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: OpenSO Launcher ${{ steps.ver.outputs.tag }}
+          files: artifacts/*.zip
+          fail_on_unmatched_files: true
