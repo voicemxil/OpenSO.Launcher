@@ -32,6 +32,13 @@
       <Setter Property="Foreground" Value="White"/>
       <Setter Property="BorderBrush" Value="#3FD9D0"/>
     </Style>
+    <!-- Switch the active highlight instantly. Fluent's default ContentPresenter brush transition animated
+         the background/border in over ~0.1s, so the cyan indicator lagged behind the (instant) view change. -->
+    <Style Selector="Button.nav /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Transitions">
+        <Transitions/>
+      </Setter>
+    </Style>
     <!-- Section heading -->
     <Style Selector="TextBlock.h1">
       <Setter Property="Foreground" Value="White"/>
