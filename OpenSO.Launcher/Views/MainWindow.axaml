@@ -32,12 +32,14 @@
       <Setter Property="Foreground" Value="White"/>
       <Setter Property="BorderBrush" Value="#3FD9D0"/>
     </Style>
-    <!-- Switch the active highlight instantly. Fluent's default ContentPresenter brush transition animated
-         the background/border in over ~0.1s, so the cyan indicator lagged behind the (instant) view change. -->
-    <Style Selector="Button.nav /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Transitions">
-        <Transitions/>
-      </Setter>
+    <!-- Keep the cyan active indicator visible while the cursor is over (or pressing) the active tab. Fluent's
+         pointerover/pressed states override the content presenter's BorderBrush, which hid the indicator under
+         the mouse — it wasn't an animation delay, the indicator just vanished on hover. -->
+    <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="BorderBrush" Value="#3FD9D0"/>
+    </Style>
+    <Style Selector="Button.nav.active:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="BorderBrush" Value="#3FD9D0"/>
     </Style>
     <!-- Section heading -->
     <Style Selector="TextBlock.h1">
