@@ -49,7 +49,7 @@ jobs:
       - name: Publish (${{ matrix.rid }})
         shell: bash
         run: |
-          dotnet publish OpenSO.Launcher.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
+          dotnet publish OpenSO.Launcher/OpenSO.Launcher.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
             -p:Version=${{ steps.ver.outputs.num }} -p:PublishSingleFile=false -o publish
 
       - name: Zip (Unix)
