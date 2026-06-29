@@ -23,6 +23,7 @@ public partial class MainViewModel : ObservableObject
     private readonly GameLauncher _launcher = new();
     private readonly NewsService _news;
     private readonly SelfUpdateService _selfUpdate;
+    private readonly StatusService _status;
     private readonly LauncherSettings _settings;
     private string? _fsoPath;
 
@@ -58,6 +59,19 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string? _updateVersion;
     [ObservableProperty] private string _clock = "";
 
+    // ---- Live server stats (HOME, polled from /userapi/status) -------------------------------------
+    [ObservableProperty] private bool _statsAvailable;
+    [ObservableProperty] private int _playersOnline;
+    [ObservableProperty] private int _lotsOnline;
+    [ObservableProperty] private string _serverName = "OpenSO";
+    [ObservableProperty] private string _serverStatus = "Connecting…";
+    [ObservableProperty] private bool _serverOnline;
+    [ObservableProperty] private string _serverGameVersion = "—";
+    [ObservableProperty] private string _serverTimeText = "—";
+    private DateTime _serverTimeUtc;
+    private DateTime _serverTimeSyncedAtUtc;
+    public ObservableCollection<TopLot> TopLots { get; } = new();
+
     public string PlayButtonText => ClientInstalled ? "PLAY" : "INSTALL";
     public bool HasUpdate => UpdateVersion != null;
     public string LauncherVersion => "OpenSO Launcher " + SelfUpdateService.CurrentVersion();
@@ -81,6 +95,7 @@ public partial class MainViewModel : ObservableObject
         _orchestrator = new InstallOrchestrator(_config, _installState);
         _news = new NewsService(_config);
         _selfUpdate = new SelfUpdateService(_config);
+        _status = new StatusService(_config);
         _settings = LauncherSettings.Load();
         GraphicsMode = _settings.GraphicsMode; ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
         RefreshRate = _settings.RefreshRate; LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
@@ -90,6 +105,7 @@ public partial class MainViewModel : ObservableObject
         _ = RefreshAsync();
         _ = LoadNewsAsync();
         _ = CheckLauncherUpdateAsync();
+        StartStatusPolling();
     }
 
     partial void OnClientInstalledChanged(bool value) => OnPropertyChanged(nameof(PlayButtonText));
@@ -112,8 +128,41 @@ public partial class MainViewModel : ObservableObject
         while (true)
         {
             Clock = DateTime.Now.ToString("h:mm tt");
-            await Task.Delay(10_000);
+            if (StatsAvailable) // tick the server clock locally between 30s polls
+                ServerTimeText = (_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc)).ToString("HH:mm 'UTC'");
+            await Task.Delay(5_000);
         }
+    }
+
+    private async void StartStatusPolling()
+    {
+        while (true)
+        {
+            await LoadStatusAsync();
+            await Task.Delay(30_000); // endpoint is cached ~10s server-side; 30s is plenty
+        }
+    }
+
+    private async Task LoadStatusAsync()
+    {
+        var s = await _status.GetAsync();
+        if (s == null)
+        {
+            StatsAvailable = false; ServerOnline = false; ServerStatus = "Offline";
+            return;
+        }
+        StatsAvailable = true;
+        PlayersOnline = s.PlayersOnline;
+        LotsOnline = s.LotsOnline;
+        ServerGameVersion = string.IsNullOrEmpty(s.GameVersion) ? "—" : s.GameVersion!;
+        _serverTimeUtc = s.ServerTime; _serverTimeSyncedAtUtc = DateTime.UtcNow;
+        ServerTimeText = s.ServerTime.ToString("HH:mm 'UTC'");
+        var shard = s.Shards?.FirstOrDefault();
+        ServerName = shard?.Name ?? "OpenSO";
+        ServerStatus = shard?.Status ?? "Online";
+        ServerOnline = string.Equals(shard?.Status, "Online", StringComparison.OrdinalIgnoreCase);
+        TopLots.Clear();
+        foreach (var l in s.TopLots ?? Array.Empty<TopLot>()) TopLots.Add(l);
     }
 
     public async Task RefreshAsync()
