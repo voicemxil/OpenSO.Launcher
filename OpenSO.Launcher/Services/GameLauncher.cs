@@ -53,12 +53,12 @@ public sealed class GameLauncher
         }
         else
         {
-            // macOS/Linux: the client is a self-contained NATIVE build (apphost named "OpenSO", no
-            // extension) — run it directly. The old Mono path (freeso.command / `mono OpenSO.exe`) is
-            // gone: there's no Mono and no .exe anymore. The bare apphost sits at the install root even
-            // on macOS (where OpenSO.app also exists); running it works for both arches and finds the
-            // sibling Content/ folder.
-            var exe = Path.Combine(installDir, "OpenSO");
+            // macOS/Linux: self-contained native build, no Mono / no .exe. On macOS the client ships as a
+            // code-only OpenSO.app, so run the apphost inside it (which keeps the app's icon while it runs);
+            // the game data lives in Content/ next to the .app. Fall back to a bare apphost (Linux, or an
+            // older install). Working dir is the install root so Content/ resolves either way.
+            var appExe = Path.Combine(installDir, "OpenSO.app", "Contents", "MacOS", "OpenSO");
+            var exe = File.Exists(appExe) ? appExe : Path.Combine(installDir, "OpenSO");
             if (!File.Exists(exe))
                 throw new FileNotFoundException("OpenSO executable not found in the install.", exe);
             TryMakeExecutable(exe);
