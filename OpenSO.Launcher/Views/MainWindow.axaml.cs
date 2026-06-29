@@ -3,14 +3,26 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Styling;
 
 namespace OpenSO.Launcher.Views;
 
 public partial class MainWindow : Window
 {
+    private readonly Bitmap _wordmarkDark;
+    private readonly Bitmap _wordmarkLight;
+
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+
+        // Theme-adaptive wordmark: white "Open" on the dark sidebar, navy "Open" on the light one.
+        _wordmarkDark = LoadAsset("openso-wordmark-ondark.png");
+        _wordmarkLight = LoadAsset("openso-wordmark-onlight.png");
+        UpdateWordmark();
+        ActualThemeVariantChanged += (_, _) => UpdateWordmark();
 
         // Frosted-glass backdrop: vibrancy on macOS (NSVisualEffectView), Mica on Windows 11,
         // a plain blur elsewhere. The window background is Transparent so the blur shows through
@@ -34,6 +46,12 @@ public partial class MainWindow : Window
             LogoImage.Margin = new Thickness(22, 52, 0, 8);
         }
     }
+
+    private void UpdateWordmark()
+        => LogoImage.Source = ActualThemeVariant == ThemeVariant.Light ? _wordmarkLight : _wordmarkDark;
+
+    private static Bitmap LoadAsset(string file)
+        => new(AssetLoader.Open(new Uri($"avares://OpenSO.Launcher/Assets/{file}")));
 
     protected override void OnOpened(EventArgs e)
     {

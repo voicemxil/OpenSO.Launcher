@@ -16,7 +16,7 @@
       <Setter Property="HorizontalAlignment" Value="Stretch"/>
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
       <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#9AA0A6"/>
+      <Setter Property="Foreground" Value="{DynamicResource Ink2}"/>
       <Setter Property="BorderThickness" Value="3,0,0,0"/>
       <Setter Property="BorderBrush" Value="Transparent"/>
       <Setter Property="Padding" Value="17,11"/>
@@ -25,12 +25,12 @@
       <Setter Property="CornerRadius" Value="0,8,8,0"/>
     </Style>
     <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#22FFFFFF"/>
-      <Setter Property="TextElement.Foreground" Value="White"/>
+      <Setter Property="Background" Value="{DynamicResource SideHover}"/>
+      <Setter Property="TextElement.Foreground" Value="{DynamicResource Ink}"/>
     </Style>
     <Style Selector="Button.nav.active">
-      <Setter Property="Background" Value="#1AFFFFFF"/>
-      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Background" Value="{DynamicResource SideActive}"/>
+      <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
       <Setter Property="BorderBrush" Value="{DynamicResource TealFill}"/>
     </Style>
     <!-- Keep the blue active indicator visible while the cursor is over (or pressing) the active tab. Fluent's
@@ -60,15 +60,16 @@
       <!-- Top inset (52) keeps the logo clear of the macOS traffic lights, which now float
            over the frosted sidebar (window client area extends under the decorations). -->
       <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
-        <!-- Logo lockup. Margin top is bumped on macOS (code-behind) to clear the traffic lights. -->
-        <Image Grid.Row="0" x:Name="LogoImage" Source="avares://OpenSO.Launcher/Assets/openso-wordmark.png"
+        <!-- Logo lockup. Source is set per theme in code-behind (on-dark vs on-light wordmark);
+             Margin top is bumped on macOS to clear the traffic lights. -->
+        <Image Grid.Row="0" x:Name="LogoImage"
                Height="40" HorizontalAlignment="Left" Margin="22,22,0,8" Stretch="Uniform"/>
 
         <!-- PLAY -->
         <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"
                 Content="{Binding PlayButtonText}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                 Background="{DynamicResource TealFill}" Foreground="{DynamicResource TealInk}" FontWeight="Bold" FontSize="16" Padding="0,12" CornerRadius="10"/>
-        <TextBlock Grid.Row="2" Text="{Binding Clock}" Foreground="#8A8E94" FontSize="12"
+        <TextBlock Grid.Row="2" Text="{Binding Clock}" Foreground="{DynamicResource Ink3}" FontSize="12"
                    HorizontalAlignment="Center" Margin="0,2,0,14"/>
 
         <!-- Nav -->
@@ -81,7 +82,7 @@
           <Button Classes="nav" Classes.active="{Binding IsAbout}"         Command="{Binding NavigateCommand}" CommandParameter="ABOUT"         Content="About"/>
         </StackPanel>
 
-        <TextBlock Grid.Row="4" Text="{Binding LauncherVersion}" Foreground="#6B6F76" FontSize="11" Margin="22,0,0,16"/>
+        <TextBlock Grid.Row="4" Text="{Binding LauncherVersion}" Foreground="{DynamicResource Ink3}" FontSize="11" Margin="22,0,0,16"/>
       </Grid>
     </Border>
 

@@ -28,6 +28,10 @@
           <SolidColorBrush x:Key="Track"  Color="#3A3A3C"/>
           <SolidColorBrush x:Key="Good"   Color="#30D158"/>
           <SolidColorBrush x:Key="Bad"    Color="#FF453A"/>
+          <!-- Frosted-glass sidebar + nav hover/active tints (opacity lets the blur backdrop show through). -->
+          <SolidColorBrush x:Key="SidebarBrush" Color="#1F2124" Opacity="0.78"/>
+          <SolidColorBrush x:Key="SideHover"  Color="#FFFFFF" Opacity="0.13"/>
+          <SolidColorBrush x:Key="SideActive" Color="#FFFFFF" Opacity="0.10"/>
         </ResourceDictionary>
 
         <ResourceDictionary x:Key="Light">
@@ -45,14 +49,15 @@
           <SolidColorBrush x:Key="Track"  Color="#E5E5EA"/>
           <SolidColorBrush x:Key="Good"   Color="#34C759"/>
           <SolidColorBrush x:Key="Bad"    Color="#FF3B30"/>
+          <!-- Light frosted sidebar + subtle dark nav tints. -->
+          <SolidColorBrush x:Key="SidebarBrush" Color="#E9E9ED" Opacity="0.72"/>
+          <SolidColorBrush x:Key="SideHover"  Color="#000000" Opacity="0.07"/>
+          <SolidColorBrush x:Key="SideActive" Color="#000000" Opacity="0.05"/>
         </ResourceDictionary>
 
       </ResourceDictionary.ThemeDictionaries>
 
       <!-- Constant (theme-independent) brand tokens -->
-      <!-- Frosted-glass sidebar: kept dark in both variants so the white "Open" wordmark stays
-           legible; the opacity lets the window's vibrancy/blur backdrop show through. -->
-      <SolidColorBrush x:Key="SidebarBrush" Color="#1F2124" Opacity="0.78"/>
       <!-- Brand teal button fill + dark ink (always bright, looks right on dark sidebar and light/dark content). -->
       <SolidColorBrush x:Key="TealFill" Color="#3FD9D0"/>
       <SolidColorBrush x:Key="TealInk"  Color="#063B3F"/>
