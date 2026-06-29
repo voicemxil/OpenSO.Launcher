@@ -269,24 +269,50 @@ public partial class MainViewModel : ObservableObject
 
         if (ClientInstalled)
         {
-            try
-            {
-                StatusLine = "Launching OpenSO…";
-                _launcher.Launch(_fsoPath!, new GameLauncher.Options
-                {
-                    GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
-                    Enable3D = ThreeDMode == "Enabled",
-                    RefreshRate = RefreshRate,
-                    LanguageCode = 0,
-                    Windowed = true,
-                });
-                Notify("OpenSO is running.");
-            }
-            catch (Exception ex) { Notify("Couldn't launch: " + ex.Message); }
+            await PlayAsync();
             return;
         }
 
         await InstallAsync();
+    }
+
+    /// <summary>Launches the game and only reports success once it has actually stayed up (instead of
+    /// always claiming "running"). On macOS, if it's blocked by Gatekeeper/quarantine, offers to clear
+    /// the block and retries once.</summary>
+    private async Task PlayAsync()
+    {
+        var opts = new GameLauncher.Options
+        {
+            GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
+            Enable3D = ThreeDMode == "Enabled",
+            RefreshRate = RefreshRate,
+            LanguageCode = 0,
+            Windowed = true,
+        };
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            StatusLine = "Launching OpenSO…";
+            System.Diagnostics.Process proc;
+            try { proc = _launcher.Launch(_fsoPath!, opts); }
+            catch (Exception ex)
+            {
+                if (OperatingSystem.IsMacOS() && await _launcher.ShowMacBlockedHelpAsync(_fsoPath!)) continue;
+                Notify("Couldn't launch OpenSO: " + ex.Message);
+                return;
+            }
+
+            // Don't claim success until we know it didn't die immediately.
+            var exitCode = await GameLauncher.WaitForEarlyExitAsync(proc, TimeSpan.FromSeconds(3));
+            if (exitCode is null) { Notify("OpenSO is running."); return; }
+
+            // A signal-kill (exit > 128) on macOS is almost always Gatekeeper/quarantine — offer to fix
+            // + retry. Otherwise the game most likely showed its own error (e.g. missing game files).
+            if (OperatingSystem.IsMacOS() && exitCode > 128 && await _launcher.ShowMacBlockedHelpAsync(_fsoPath!))
+                continue;
+            Notify($"OpenSO closed right after starting (exit code {exitCode}). If it showed an error, follow that; otherwise try reinstalling the game.");
+            return;
+        }
     }
 
     [RelayCommand]

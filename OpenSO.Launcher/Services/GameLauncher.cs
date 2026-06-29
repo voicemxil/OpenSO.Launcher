@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace OpenSO.Launcher.Services;
 
@@ -92,6 +94,70 @@ public sealed class GameLauncher
         if (o.Enable3D && o.GraphicsMode != "sw") args.Add("-3d");
         if (o.RefreshRate > 0) args.Add($"-hz{o.RefreshRate}");
         return args;
+    }
+
+    /// <summary>Returns the process's exit code if it dies within <paramref name="within"/> (the launch
+    /// failed), or null if it's still running by then (launched OK).</summary>
+    public static async Task<int?> WaitForEarlyExitAsync(Process proc, TimeSpan within)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(within);
+            await proc.WaitForExitAsync(cts.Token);
+            return SafeExitCode(proc);
+        }
+        catch (OperationCanceledException) { return null; } // still running -> launched OK
+        catch { return null; }
+    }
+
+    private static int SafeExitCode(Process p) { try { return p.ExitCode; } catch { return -1; } }
+
+    /// <summary>macOS: native popup explaining Gatekeeper blocked the (non-notarized) app and how to allow
+    /// it. Returns true if the user chose to clear the download-quarantine flag (the caller then retries).</summary>
+    public async Task<bool> ShowMacBlockedHelpAsync(string installDir)
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) return false;
+        var script =
+            "display dialog \"macOS blocked OpenSO from opening because it isn't notarized by Apple. " +
+            "Click 'Allow & Retry' to clear the download flag and try again, or open Privacy & Security " +
+            "and choose 'Open Anyway'.\" with title \"OpenSO\" with icon caution " +
+            "buttons {\"Open Privacy Settings\", \"Allow & Retry\"} default button \"Allow & Retry\"";
+        var choice = await RunCaptureAsync("osascript", new[] { "-e", script });
+        if (choice.Contains("Allow & Retry"))
+        {
+            await RunAsync("xattr", new[] { "-dr", "com.apple.quarantine", installDir });
+            return true;
+        }
+        if (choice.Contains("Open Privacy Settings"))
+            await RunAsync("open", new[] { "x-apple.systempreferences:com.apple.preference.security?Privacy" });
+        return false;
+    }
+
+    private static async Task<string> RunCaptureAsync(string file, string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo { FileName = file, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi);
+            if (p == null) return "";
+            var outp = await p.StandardOutput.ReadToEndAsync();
+            await p.WaitForExitAsync();
+            return outp;
+        }
+        catch { return ""; }
+    }
+
+    private static async Task RunAsync(string file, string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo { FileName = file, UseShellExecute = false };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi);
+            if (p != null) await p.WaitForExitAsync();
+        }
+        catch { }
     }
 
     private static void TryMakeExecutable(string path)
