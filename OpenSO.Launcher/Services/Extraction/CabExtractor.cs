@@ -101,6 +101,11 @@ public static class CabExtractor
             cur = meta.Next != null ? Path.Combine(dir, meta.Next) : null;
         }
 
+        // Every cabinet's bytes are now held in memory (Block.Cab), so the on-disk cab files are no
+        // longer needed. Delete them BEFORE writing the (larger) extracted game below — otherwise the
+        // cabs + the extracted files would coexist and roughly double the peak disk usage.
+        if (purge) foreach (var p in processed) try { File.Delete(p); } catch { }
+
         // 2. Decompress folders on demand and write each file from its folder's data.
         int total = files.Count, done = 0;
         var folderData = new Dictionary<int, byte[]>();
@@ -125,7 +130,6 @@ public static class CabExtractor
             progress?.Report(new ProgressReport("cab", total > 0 ? (double)done / total : 1.0, f.Name));
         }
 
-        if (purge) foreach (var p in processed) try { File.Delete(p); } catch { }
         progress?.Report(new ProgressReport("cab", 1.0, "done"));
     }
 

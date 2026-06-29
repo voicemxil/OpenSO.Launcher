@@ -37,6 +37,12 @@ public sealed class TsoInstaller : IComponentInstaller
 
     public async Task InstallAsync(string installPath, IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
+        // Pre-flight: this install needs the download + unpacked cabs + the extracted game on disk.
+        // Check up front (both the install volume and temp) so we fail with a clear message instead of
+        // running out of space partway through the cab extraction.
+        EnsureFreeSpace(installPath);
+        EnsureFreeSpace(Path.GetTempPath());
+
         var source = _config.ResourceCentral.TryGetValue("TheSimsOnline", out var url)
             ? url : _config.TsoAssetsBaseUrl;
 
@@ -57,6 +63,10 @@ public sealed class TsoInstaller : IComponentInstaller
             Directory.CreateDirectory(installPath);
             await ZipExtractor.ExtractAsync(zipPath, unzipDir,
                 Scale(progress, "tso", 0.60, 0.72, "Unpacking installer… "), false, ct);
+
+            // Free the 1.27 GB download now that the cabs are unpacked — it's no longer needed, and
+            // keeping it would inflate the peak disk usage during the (large) cab extraction below.
+            try { File.Delete(zipPath); } catch { }
 
             // Step 4: locate Data1.cab. The canonical FreeSO TSO.zip puts Data1.cab…Data1111.cab at
             // the root; some other distributions nest them under TSO_Installer_v.../. Check root
@@ -87,6 +97,26 @@ public sealed class TsoInstaller : IComponentInstaller
         {
             try { if (Directory.Exists(work)) Directory.Delete(work, true); } catch { }
         }
+    }
+
+    // The install peaks at the download (~1.3 GB) coexisting with the unpacked cabs (~1.3 GB), then the
+    // extracted game (~2 GB) after both are freed. Require a safe margin so we never stall mid-extraction.
+    private const long MinFreeBytes = 4L * 1024 * 1024 * 1024;
+
+    private static void EnsureFreeSpace(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrEmpty(root)) return;
+            var di = new DriveInfo(root);
+            if (di.IsReady && di.AvailableFreeSpace < MinFreeBytes)
+                throw new IOException(
+                    $"Not enough free disk space to install The Sims Online: about {MinFreeBytes >> 30} GB is needed, " +
+                    $"but only {di.AvailableFreeSpace >> 30} GB is free on {root}. Free up space and try again.");
+        }
+        catch (IOException) { throw; }
+        catch { /* DriveInfo unavailable for this path — skip the pre-flight check rather than block. */ }
     }
 
     private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
