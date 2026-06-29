@@ -89,12 +89,22 @@ jobs:
           # yet -> the legacy .icns below is the only icon.
           ICON="OpenSO.Launcher/Assets/openso.icon"
           if [ -e "$ICON" ]; then
-            xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
-              --output-partial-info-plist /tmp/icon.plist --app-icon Icon --include-all-app-icons \
-              --enable-on-demand-resources NO --development-region en \
-              --target-device mac --minimum-deployment-target 26.0 --platform macosx
-            plutil -insert CFBundleIconName -string Icon "$PL"
-            echo "Embedded Liquid Glass .icon (Assets.car)."
+            # Icon Composer 2 (.icon) needs a recent actool — select the newest Xcode on the runner.
+            NEWEST_XCODE="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+            if [ -n "$NEWEST_XCODE" ]; then sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer" || true; fi
+            echo "Using $(xcodebuild -version 2>/dev/null | head -1); actool: $(xcrun --find actool 2>/dev/null)"
+            # Best-effort: if the runner's actool can't open the Icon Composer 2 export (Xcode too old, or
+            # a macOS 27-only effect like refractivity), DON'T fail the release — fall back to the legacy
+            # .icns built below (macOS auto-containers it in Liquid Glass anyway).
+            if xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
+                 --output-partial-info-plist /tmp/icon.plist --app-icon Icon --include-all-app-icons \
+                 --enable-on-demand-resources NO --development-region en \
+                 --target-device mac --minimum-deployment-target 26.0 --platform macosx; then
+              plutil -insert CFBundleIconName -string Icon "$PL"
+              echo "Embedded Liquid Glass .icon (Assets.car)."
+            else
+              echo "::warning::actool could not compile $ICON on this runner's Xcode — shipping the legacy .icns (macOS still containers it). Try an export without macOS 27-only effects, or commit a pre-built Assets.car."
+            fi
           else
             echo "No openso.icon committed yet — legacy .icns only."
           fi
