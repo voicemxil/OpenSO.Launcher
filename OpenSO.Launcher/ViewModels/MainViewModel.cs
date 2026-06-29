@@ -128,9 +128,9 @@ public partial class MainViewModel : ObservableObject
         while (true)
         {
             Clock = DateTime.Now.ToString("h:mm tt");
-            if (StatsAvailable) // tick the server clock locally between 30s polls
-                ServerTimeText = (_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc)).ToString("HH:mm 'UTC'");
-            await Task.Delay(5_000);
+            if (StatsAvailable) // in-game time-of-day, anchored to the server's UTC and ticked locally
+                ServerTimeText = GameClock.Format(_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc));
+            await Task.Delay(1_000);
         }
     }
 
@@ -155,8 +155,7 @@ public partial class MainViewModel : ObservableObject
         PlayersOnline = s.PlayersOnline;
         LotsOnline = s.LotsOnline;
         ServerGameVersion = string.IsNullOrEmpty(s.GameVersion) ? "—" : s.GameVersion!;
-        _serverTimeUtc = s.ServerTime; _serverTimeSyncedAtUtc = DateTime.UtcNow;
-        ServerTimeText = s.ServerTime.ToString("HH:mm 'UTC'");
+        _serverTimeUtc = s.ServerTime; _serverTimeSyncedAtUtc = DateTime.UtcNow; // anchor for the in-game clock
         var shard = s.Shards?.FirstOrDefault();
         ServerName = shard?.Name ?? "OpenSO";
         // ShardStatus enum: Up / Down / Busy / Full / Closed / Frontier. Up/Busy/Full = reachable.
