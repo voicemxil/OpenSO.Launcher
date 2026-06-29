@@ -16,6 +16,10 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets/**" />
+    <!-- The macOS Liquid Glass icon source (Icon Composer .icon bundle) is compiled
+         by actool in the release workflow, not embedded in the app — exclude it. -->
+    <AvaloniaResource Remove="Assets/openso.icon/**" />
+    <None Include="Assets/openso.icon/**" />
   </ItemGroup>
 
   <ItemGroup>
