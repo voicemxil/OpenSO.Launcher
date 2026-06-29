@@ -111,6 +111,18 @@
               </Grid>
             </Border>
 
+            <!-- Game (client) update required: installed version != the version the server runs -->
+            <Border Classes="card" Background="{DynamicResource UpdateBg}" BorderBrush="{DynamicResource TealFill}" BorderThickness="1"
+                    IsVisible="{Binding GameUpdateAvailable}">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource UpdateInk}" TextWrapping="Wrap">
+                  <Run Text="A game update is required to play — the server is running "/><Run Text="{Binding ServerGameVersion}" Foreground="{DynamicResource TealFill}" FontWeight="Bold"/><Run Text="."/>
+                </TextBlock>
+                <Button Grid.Column="1" Content="Update Game" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"
+                        Background="{DynamicResource TealFill}" Foreground="{DynamicResource TealInk}" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
+              </Grid>
+            </Border>
+
             <!-- LIVE SERVER STATS (polled from /userapi/status) -->
             <Border Classes="card">
               <StackPanel Spacing="14">

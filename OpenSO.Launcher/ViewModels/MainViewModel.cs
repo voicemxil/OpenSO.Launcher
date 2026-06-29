@@ -52,10 +52,19 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private double _progress;
     [ObservableProperty] private string _progressDetail = "";
     [ObservableProperty] private bool _busy;
-    [ObservableProperty] private bool _clientInstalled;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PlayButtonText))]
+    private bool _clientInstalled;
     [ObservableProperty] private bool _assetsInstalled;
     [ObservableProperty] private bool _remeshInstalled;
     [ObservableProperty] private string _remeshState = "Checking…";
+
+    // Game (client) version: the installed client's version.txt vs the version the server requires.
+    // A mismatch means the client must update before it can connect (login version protocol).
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PlayButtonText))]
+    private bool _gameUpdateAvailable;
+    [ObservableProperty] private string? _installedGameVersion;
     [ObservableProperty] private string? _updateVersion;
     [ObservableProperty] private string _clock = "";
 
@@ -72,7 +81,7 @@ public partial class MainViewModel : ObservableObject
     private DateTime _serverTimeSyncedAtUtc;
     public ObservableCollection<TopLot> TopLots { get; } = new();
 
-    public string PlayButtonText => ClientInstalled ? "PLAY" : "INSTALL";
+    public string PlayButtonText => !ClientInstalled ? "INSTALL" : GameUpdateAvailable ? "UPDATE GAME" : "PLAY";
     public bool HasUpdate => UpdateVersion != null;
     public string LauncherVersion => "OpenSO Launcher " + SelfUpdateService.CurrentVersion();
     public ObservableCollection<NewsItem> NewsItems { get; } = new();
@@ -149,6 +158,7 @@ public partial class MainViewModel : ObservableObject
         if (s == null)
         {
             StatsAvailable = false; ServerOnline = false; ServerStatus = "Offline";
+            GameUpdateAvailable = false; // can't know the required version while the status endpoint is down
             return;
         }
         StatsAvailable = true;
@@ -169,6 +179,8 @@ public partial class MainViewModel : ObservableObject
             l.ThumbnailUrl = $"{api}/userapi/city/{l.ShardId}/{l.Location}.png";
             TopLots.Add(l);
         }
+
+        RecomputeGameUpdate(); // server version just refreshed — re-check it against the installed client
     }
 
     public async Task RefreshAsync()
@@ -183,10 +195,41 @@ public partial class MainViewModel : ObservableObject
         AssetsInstalled = tso?.IsInstalled == true;
         RemeshInstalled = rms?.IsInstalled == true;
         _fsoPath = ClientInstalled ? fso!.Path : null;
+        InstalledGameVersion = ClientInstalled ? ReadGameVersion(_fsoPath) : null;
         ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
         AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
         RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
         StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
+        RecomputeGameUpdate();
+    }
+
+    /// <summary>True when the installed client's version differs from the version the server requires
+    /// (or the client predates version stamping) — it must update before it can connect.</summary>
+    private void RecomputeGameUpdate()
+    {
+        if (!ClientInstalled || !StatsAvailable || string.IsNullOrWhiteSpace(ServerGameVersion) || ServerGameVersion == "—")
+        {
+            GameUpdateAvailable = false;
+            return;
+        }
+        var server = NormalizeVersion(ServerGameVersion);
+        var local = NormalizeVersion(InstalledGameVersion);
+        // Missing local version => an old install from before version.txt => treat as needing an update.
+        GameUpdateAvailable = string.IsNullOrEmpty(local) || !string.Equals(local, server, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeVersion(string? v) => (v ?? "").Trim().TrimStart('v', 'V');
+
+    /// <summary>Reads the client's stamped version (the release CI writes &lt;install&gt;/version.txt).</summary>
+    private static string? ReadGameVersion(string? fsoDir)
+    {
+        if (string.IsNullOrEmpty(fsoDir)) return null;
+        try
+        {
+            var path = System.IO.Path.Combine(fsoDir, "version.txt");
+            return System.IO.File.Exists(path) ? System.IO.File.ReadAllText(path).Trim() : null;
+        }
+        catch { return null; }
     }
 
     private async Task LoadNewsAsync()
@@ -216,6 +259,13 @@ public partial class MainViewModel : ObservableObject
     private async Task PrimaryActionAsync()
     {
         if (Busy) return;
+
+        // An out-of-date client can't connect (login version protocol) — update before launching.
+        if (ClientInstalled && GameUpdateAvailable)
+        {
+            await UpdateGameAsync();
+            return;
+        }
 
         if (ClientInstalled)
         {
@@ -257,6 +307,28 @@ public partial class MainViewModel : ObservableObject
             Notify("Install complete.");
         }
         catch (Exception ex) { Notify("Install failed: " + ex.Message); }
+        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+    }
+
+    /// <summary>Updates the installed client to the server's required version by re-running the client
+    /// install (downloads the current release and extracts over the existing install).</summary>
+    private async Task UpdateGameAsync()
+    {
+        if (Busy) return;
+        Busy = true; Progress = 0; Section = "DOWNLOADS";
+        Notify($"Updating the game to match the server ({ServerGameVersion})…");
+        try
+        {
+            var reporter = new Progress<ProgressReport>(r =>
+            {
+                Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
+                StatusLine = $"{r.Stage}: {r.Detail}";
+            });
+            await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                onUnsupported: code => Notify($"{code} not available."));
+            Notify("Game updated. Press PLAY to launch.");
+        }
+        catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
