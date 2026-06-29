@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:OpenSO.Launcher.ViewModels"
+        xmlns:asyncImageLoader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
         x:Class="OpenSO.Launcher.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Width="960" Height="620" MinWidth="860" MinHeight="560"
@@ -138,9 +139,12 @@
             <ItemsControl ItemsSource="{Binding TopLots}" x:CompileBindings="False">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
-                    <TextBlock Grid.Column="0" Text="{Binding Name}" Foreground="White" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Grid.Column="1" Text="{Binding Players}" Foreground="#3FD9D0" FontWeight="SemiBold"/>
+                  <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6" ColumnSpacing="10">
+                    <Border Grid.Column="0" Width="42" Height="42" CornerRadius="5" ClipToBounds="True" Background="#0A1626">
+                      <Image asyncImageLoader:ImageLoader.Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
+                    </Border>
+                    <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="2" Text="{Binding Players}" Foreground="#3FD9D0" FontWeight="SemiBold" VerticalAlignment="Center"/>
                   </Grid>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>

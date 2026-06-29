@@ -24,12 +24,14 @@
 
   <ItemGroup>
     <!-- Pin to current stable Avalonia at build time; these are indicative versions. -->
-    <PackageReference Include="Avalonia" Version="11.*" />
-    <PackageReference Include="Avalonia.Desktop" Version="11.*" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.*" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.*" />
+    <PackageReference Include="Avalonia" Version="12.*" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.*" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.*" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.*" />
     <!-- MVVM helpers -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
+    <!-- Async URL->image loading for lot thumbnails (Avalonia can't bind remote URLs natively) -->
+    <PackageReference Include="AsyncImageLoader.Avalonia" Version="3.*" />
     <!-- Registry access (no-op on non-Windows; needed so InstallStateService compiles cross-platform) -->
     <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>

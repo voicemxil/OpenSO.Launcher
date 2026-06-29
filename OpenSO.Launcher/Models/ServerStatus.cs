@@ -28,4 +28,7 @@ public sealed class TopLot
     public string? Name { get; set; }
     public uint Location { get; set; }
     public int Players { get; set; }
+
+    /// <summary>Lot render thumbnail URL, set by the VM: {api}/userapi/city/{ShardId}/{Location}.png.</summary>
+    public string? ThumbnailUrl { get; set; }
 }

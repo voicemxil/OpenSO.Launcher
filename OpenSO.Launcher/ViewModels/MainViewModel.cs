@@ -162,8 +162,13 @@ public partial class MainViewModel : ObservableObject
         var st = shard?.Status ?? "Down";
         ServerOnline = st is "Up" or "Busy" or "Full";
         ServerStatus = st == "Up" ? "Online" : st; // friendlier label for the common case
+        var api = _config.ApiBaseUrl.TrimEnd('/');
         TopLots.Clear();
-        foreach (var l in s.TopLots ?? Array.Empty<TopLot>()) TopLots.Add(l);
+        foreach (var l in s.TopLots ?? Array.Empty<TopLot>())
+        {
+            l.ThumbnailUrl = $"{api}/userapi/city/{l.ShardId}/{l.Location}.png";
+            TopLots.Add(l);
+        }
     }
 
     public async Task RefreshAsync()
