@@ -1,6 +1,7 @@
 using System;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -50,6 +51,21 @@ public partial class MainWindow : Window
             ExtendClientAreaTitleBarHeightHint = -1;
             if (_logo is not null)
                 _logo.Margin = new Thickness(22, 52, 0, 8);
+
+            // The extended client area has no native title bar, so the window can't be dragged.
+            // Make the top strip a drag handle, and push the content below it so it stays clickable.
+            var dragBar = this.FindControl<Border>("MacDragBar");
+            if (dragBar is not null)
+            {
+                dragBar.IsVisible = true;
+                dragBar.PointerPressed += (_, e) =>
+                {
+                    if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+                        BeginMoveDrag(e);
+                };
+            }
+            if (this.FindControl<Grid>("ContentRoot") is { } content)
+                content.Margin = new Thickness(0, 30, 0, 0);
         }
     }
 

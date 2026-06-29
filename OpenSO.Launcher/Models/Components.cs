@@ -32,17 +32,19 @@ public static class Components
     public static string InstallDirName(string code) => code == "TSO" ? "The Sims Online" : code;
 
     /// <summary>
-    /// Dependency graph (constants.js `dependencies`). Platform-sensitive: on macOS/Linux the
-    /// client needs Mono + SDL; on Windows it needs OpenAL. Resolve recursively before installing.
+    /// Dependency graph (constants.js `dependencies`). The OpenSO client is a self-contained native
+    /// .NET build (CI: `dotnet publish -r &lt;rid&gt; --self-contained`), so it bundles its own runtime and
+    /// native libs (SDL2/OpenAL via MonoGame's runtime packages). The legacy FreeSO-on-Mono deps
+    /// (Mono, SDL, OpenAL, MacExtras) are obsolete — the only thing the client still needs is the TSO
+    /// game assets. (Those endpoints were never hosted, so requiring them 404'd and broke install.)
     /// </summary>
     public static Dictionary<string, string[]> DependenciesFor(OSPlatformKind os)
     {
         bool unixLike = os is OSPlatformKind.MacOS or OSPlatformKind.Linux;
         return new Dictionary<string, string[]>
         {
-            ["FSO"]       = unixLike ? new[] { "TSO", "Mono", "SDL" } : new[] { "TSO", "OpenAL" },
+            ["FSO"]       = new[] { "TSO" },
             ["RMS"]       = new[] { "FSO" },
-            ["MacExtras"] = new[] { "FSO" },
             ["Simitone"]  = unixLike ? new[] { "Mono", "SDL" } : System.Array.Empty<string>(),
         };
     }

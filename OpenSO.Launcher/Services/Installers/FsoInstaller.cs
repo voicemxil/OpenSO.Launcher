@@ -20,7 +20,7 @@ namespace OpenSO.Launcher.Services.Installers;
 ///   3. Create the install directory
 ///   4. Extract the zip into it
 ///   5. Register the install (registry on Windows / local config elsewhere)
-///   6. On macOS/Linux, fetch + extract MacExtras
+/// The client is self-contained native .NET, so there's no separate runtime/MacExtras step.
 /// </summary>
 public sealed class FsoInstaller : IComponentInstaller
 {
@@ -58,18 +58,6 @@ public sealed class FsoInstaller : IComponentInstaller
             // Step 5: register the install.
             progress.Report(new ProgressReport("client", 0.93, "Registering install…"));
             _registerInstall?.Invoke(Code, installPath);
-
-            // Step 6: Mac/Linux extras.
-            if (IsUnixLike() && _config.ResourceCentral.TryGetValue("MacExtras", out var extrasUrl))
-            {
-                progress.Report(new ProgressReport("client", 0.94, "Downloading platform extras…"));
-                var extrasZip = Path.Combine(Path.GetTempPath(), $"openso-macextras-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.zip");
-                var extrasDl = new DownloadService(extrasUrl, extrasZip);
-                await extrasDl.RunAsync(Scale(progress, "client", 0.94, 0.98), ct);
-                await ZipExtractor.ExtractAsync(extrasZip, installPath,
-                    Scale(progress, "client", 0.98, 1.00, "Installing extras… "), preservePermissions: true, ct);
-                TryDelete(extrasZip);
-            }
 
             progress.Report(new ProgressReport("client", 1.0, "Installation finished."));
         }
@@ -162,9 +150,6 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         return Http.SendAsync(req, ct);
     }
-
-    private static bool IsUnixLike() =>
-        RuntimeInformation.IsOSPlatform(OSPlatform.OSX) || RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
     private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
 
