@@ -1,22 +1,59 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="OpenSO.Launcher.App"
-             RequestedThemeVariant="Dark">
+             RequestedThemeVariant="Default">
 
+  <!-- RequestedThemeVariant="Default" => follow the OS light/dark appearance. -->
   <Application.Styles>
     <FluentTheme />
   </Application.Styles>
 
   <Application.Resources>
-    <!-- OpenSO brand palette -->
-    <Color x:Key="Navy0">#16314F</Color>
-    <Color x:Key="Navy1">#0E2138</Color>
-    <Color x:Key="Navy2">#0A1626</Color>
-    <Color x:Key="Accent">#3FD9D0</Color>
-    <Color x:Key="AccentInk">#073B3F</Color>
-    <SolidColorBrush x:Key="NavyBrush" Color="#0A1626" />
-    <SolidColorBrush x:Key="Navy1Brush" Color="#0E2138" />
-    <SolidColorBrush x:Key="AccentBrush" Color="#3FD9D0" />
-    <SolidColorBrush x:Key="MutedBrush" Color="#8FB4C2" />
+    <ResourceDictionary>
+      <!-- Light/dark adaptive palette: neutral grays + a single blue accent.
+           Referenced everywhere via {DynamicResource} so it flips with the OS theme. -->
+      <ResourceDictionary.ThemeDictionaries>
+
+        <ResourceDictionary x:Key="Dark">
+          <Color x:Key="SystemAccentColor">#0A84FF</Color>
+          <SolidColorBrush x:Key="Bg"         Color="#1C1C1E"/>
+          <SolidColorBrush x:Key="Card"       Color="#2C2C2E"/>
+          <SolidColorBrush x:Key="CardAlt"    Color="#3A3A3C"/>
+          <SolidColorBrush x:Key="Ink"        Color="#F5F5F7"/>
+          <SolidColorBrush x:Key="Ink2"       Color="#AEAEB2"/>
+          <SolidColorBrush x:Key="Ink3"       Color="#8E8E93"/>
+          <SolidColorBrush x:Key="Line"       Color="#3A3A3C"/>
+          <SolidColorBrush x:Key="Accent"     Color="#0A84FF"/>
+          <SolidColorBrush x:Key="AccentSoft" Color="#16263B"/>
+          <SolidColorBrush x:Key="OnAccent"   Color="#FFFFFF"/>
+          <SolidColorBrush x:Key="Track"      Color="#3A3A3C"/>
+          <SolidColorBrush x:Key="Good"       Color="#30D158"/>
+          <SolidColorBrush x:Key="Bad"        Color="#FF453A"/>
+        </ResourceDictionary>
+
+        <ResourceDictionary x:Key="Light">
+          <Color x:Key="SystemAccentColor">#007AFF</Color>
+          <SolidColorBrush x:Key="Bg"         Color="#F5F5F7"/>
+          <SolidColorBrush x:Key="Card"       Color="#FFFFFF"/>
+          <SolidColorBrush x:Key="CardAlt"    Color="#ECECEF"/>
+          <SolidColorBrush x:Key="Ink"        Color="#1D1D1F"/>
+          <SolidColorBrush x:Key="Ink2"       Color="#6E6E73"/>
+          <SolidColorBrush x:Key="Ink3"       Color="#8E8E93"/>
+          <SolidColorBrush x:Key="Line"       Color="#E2E2E7"/>
+          <SolidColorBrush x:Key="Accent"     Color="#007AFF"/>
+          <SolidColorBrush x:Key="AccentSoft" Color="#E8F1FF"/>
+          <SolidColorBrush x:Key="OnAccent"   Color="#FFFFFF"/>
+          <SolidColorBrush x:Key="Track"      Color="#E5E5EA"/>
+          <SolidColorBrush x:Key="Good"       Color="#34C759"/>
+          <SolidColorBrush x:Key="Bad"        Color="#FF3B30"/>
+        </ResourceDictionary>
+
+      </ResourceDictionary.ThemeDictionaries>
+
+      <!-- Constant (theme-independent): the frosted-glass sidebar. Kept dark in both
+           variants so the white "Open" wordmark stays legible; the 0.72 opacity lets the
+           window's vibrancy/blur backdrop show through (TransparencyLevelHint on the window). -->
+      <SolidColorBrush x:Key="SidebarBrush" Color="#1F2124" Opacity="0.72"/>
+    </ResourceDictionary>
   </Application.Resources>
 </Application>

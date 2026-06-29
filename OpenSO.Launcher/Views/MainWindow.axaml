@@ -7,16 +7,16 @@
         Width="960" Height="620" MinWidth="860" MinHeight="560"
         Title="OpenSO Launcher"
         Icon="avares://OpenSO.Launcher/Assets/openso.ico"
-        Background="#0A1626"
+        Background="Transparent"
         WindowStartupLocation="CenterScreen">
 
   <Window.Styles>
-    <!-- Sidebar nav buttons -->
+    <!-- Sidebar nav buttons (sidebar is a fixed dark frosted panel, so its text is light) -->
     <Style Selector="Button.nav">
       <Setter Property="HorizontalAlignment" Value="Stretch"/>
       <Setter Property="HorizontalContentAlignment" Value="Left"/>
       <Setter Property="Background" Value="Transparent"/>
-      <Setter Property="Foreground" Value="#8FB4C2"/>
+      <Setter Property="Foreground" Value="#9AA0A6"/>
       <Setter Property="BorderThickness" Value="3,0,0,0"/>
       <Setter Property="BorderBrush" Value="Transparent"/>
       <Setter Property="Padding" Value="17,11"/>
@@ -25,295 +25,303 @@
       <Setter Property="CornerRadius" Value="0,8,8,0"/>
     </Style>
     <Style Selector="Button.nav:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="Background" Value="#13243B"/>
+      <Setter Property="Background" Value="#22FFFFFF"/>
       <Setter Property="TextElement.Foreground" Value="White"/>
     </Style>
     <Style Selector="Button.nav.active">
-      <Setter Property="Background" Value="#13243B"/>
+      <Setter Property="Background" Value="#1AFFFFFF"/>
       <Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderBrush" Value="#3FD9D0"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
     </Style>
-    <!-- Keep the cyan active indicator visible while the cursor is over (or pressing) the active tab. Fluent's
+    <!-- Keep the blue active indicator visible while the cursor is over (or pressing) the active tab. Fluent's
          pointerover/pressed states override the content presenter's BorderBrush, which hid the indicator under
          the mouse — it wasn't an animation delay, the indicator just vanished on hover. -->
     <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="#3FD9D0"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
     </Style>
     <Style Selector="Button.nav.active:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="#3FD9D0"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
     </Style>
     <!-- Section heading -->
     <Style Selector="TextBlock.h1">
-      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Foreground" Value="{DynamicResource Ink}"/>
       <Setter Property="FontSize" Value="22"/>
       <Setter Property="FontWeight" Value="Bold"/>
     </Style>
-    <Style Selector="TextBlock.sub"><Setter Property="Foreground" Value="#8FB4C2"/><Setter Property="FontSize" Value="13"/></Style>
-    <Style Selector="TextBlock.label"><Setter Property="Foreground" Value="#8FB4C2"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="FontSize" Value="12"/></Style>
-    <Style Selector="Border.card"><Setter Property="Background" Value="#0E2138"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="18,16"/></Style>
+    <Style Selector="TextBlock.sub"><Setter Property="Foreground" Value="{DynamicResource Ink2}"/><Setter Property="FontSize" Value="13"/></Style>
+    <Style Selector="TextBlock.label"><Setter Property="Foreground" Value="{DynamicResource Ink2}"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="FontSize" Value="12"/></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="{DynamicResource Card}"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="18,16"/></Style>
   </Window.Styles>
 
   <Grid ColumnDefinitions="232,*">
 
-    <!-- ============ SIDEBAR ============ -->
-    <Grid Grid.Column="0" Background="#0E2138" RowDefinitions="Auto,Auto,Auto,*,Auto">
-      <!-- Logo lockup -->
-      <Image Grid.Row="0" Source="avares://OpenSO.Launcher/Assets/openso-wordmark.png"
-             Height="44" HorizontalAlignment="Left" Margin="22,22,0,8" Stretch="Uniform"/>
+    <!-- ============ SIDEBAR (frosted glass) ============ -->
+    <Border Grid.Column="0" Background="{DynamicResource SidebarBrush}">
+      <!-- Top inset (52) keeps the logo clear of the macOS traffic lights, which now float
+           over the frosted sidebar (window client area extends under the decorations). -->
+      <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+        <!-- Logo lockup -->
+        <Image Grid.Row="0" Source="avares://OpenSO.Launcher/Assets/openso-wordmark.png"
+               Height="40" HorizontalAlignment="Left" Margin="22,52,0,8" Stretch="Uniform"/>
 
-      <!-- PLAY -->
-      <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"
-              Content="{Binding PlayButtonText}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-              Background="#3FD9D0" Foreground="#073B3F" FontWeight="Bold" FontSize="16" Padding="0,12" CornerRadius="10"/>
-      <TextBlock Grid.Row="2" Text="{Binding Clock}" Foreground="#5E83A0" FontSize="12"
-                 HorizontalAlignment="Center" Margin="0,2,0,14"/>
+        <!-- PLAY -->
+        <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"
+                Content="{Binding PlayButtonText}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" FontSize="16" Padding="0,12" CornerRadius="10"/>
+        <TextBlock Grid.Row="2" Text="{Binding Clock}" Foreground="#8A8E94" FontSize="12"
+                   HorizontalAlignment="Center" Margin="0,2,0,14"/>
 
-      <!-- Nav -->
-      <StackPanel Grid.Row="3" Margin="0,4,0,0">
-        <Button Classes="nav" Classes.active="{Binding IsHome}"          Command="{Binding NavigateCommand}" CommandParameter="HOME"          Content="Home"/>
-        <Button Classes="nav" Classes.active="{Binding IsInstaller}"     Command="{Binding NavigateCommand}" CommandParameter="INSTALLER"     Content="Installer"/>
-        <Button Classes="nav" Classes.active="{Binding IsDownloads}"     Command="{Binding NavigateCommand}" CommandParameter="DOWNLOADS"     Content="Downloads"/>
-        <Button Classes="nav" Classes.active="{Binding IsSettings}"      Command="{Binding NavigateCommand}" CommandParameter="SETTINGS"      Content="Settings"/>
-        <Button Classes="nav" Classes.active="{Binding IsNotifications}" Command="{Binding NavigateCommand}" CommandParameter="NOTIFICATIONS" Content="Notifications"/>
-        <Button Classes="nav" Classes.active="{Binding IsAbout}"         Command="{Binding NavigateCommand}" CommandParameter="ABOUT"         Content="About"/>
-      </StackPanel>
+        <!-- Nav -->
+        <StackPanel Grid.Row="3" Margin="0,4,0,0">
+          <Button Classes="nav" Classes.active="{Binding IsHome}"          Command="{Binding NavigateCommand}" CommandParameter="HOME"          Content="Home"/>
+          <Button Classes="nav" Classes.active="{Binding IsInstaller}"     Command="{Binding NavigateCommand}" CommandParameter="INSTALLER"     Content="Installer"/>
+          <Button Classes="nav" Classes.active="{Binding IsDownloads}"     Command="{Binding NavigateCommand}" CommandParameter="DOWNLOADS"     Content="Downloads"/>
+          <Button Classes="nav" Classes.active="{Binding IsSettings}"      Command="{Binding NavigateCommand}" CommandParameter="SETTINGS"      Content="Settings"/>
+          <Button Classes="nav" Classes.active="{Binding IsNotifications}" Command="{Binding NavigateCommand}" CommandParameter="NOTIFICATIONS" Content="Notifications"/>
+          <Button Classes="nav" Classes.active="{Binding IsAbout}"         Command="{Binding NavigateCommand}" CommandParameter="ABOUT"         Content="About"/>
+        </StackPanel>
 
-      <TextBlock Grid.Row="4" Text="{Binding LauncherVersion}" Foreground="#3C5B78" FontSize="11" Margin="22,0,0,16"/>
-    </Grid>
+        <TextBlock Grid.Row="4" Text="{Binding LauncherVersion}" Foreground="#6B6F76" FontSize="11" Margin="22,0,0,16"/>
+      </Grid>
+    </Border>
 
     <!-- ============ CONTENT ============ -->
-    <Grid Grid.Column="1" Margin="0">
+    <Border Grid.Column="1" Background="{DynamicResource Bg}">
+      <!-- Top inset (34) leaves room under the overlaid window caption buttons. -->
+      <Grid Margin="0,34,0,0">
 
-      <!-- HOME -->
-      <ScrollViewer IsVisible="{Binding IsHome}" VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="30,28" Spacing="16">
-          <TextBlock Classes="h1" Text="Welcome to OpenSO"/>
-          <TextBlock Classes="sub" Text="The Sims Online, reborn — free, fair, and built in the open."/>
+        <!-- HOME -->
+        <ScrollViewer IsVisible="{Binding IsHome}" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,8,30,28" Spacing="16">
+            <TextBlock Classes="h1" Text="Welcome to OpenSO"/>
+            <TextBlock Classes="sub" Text="The Sims Online, reborn — free, fair, and built in the open."/>
 
-          <Border Classes="card" Background="#13313A" BorderBrush="#3FD9D0" BorderThickness="1"
-                  IsVisible="{Binding HasUpdate}">
-            <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="White" TextWrapping="Wrap">
-                <Run Text="A new launcher version is available: "/><Run Text="{Binding UpdateVersion}" Foreground="#3FD9D0" FontWeight="Bold"/>
-              </TextBlock>
-              <Button Grid.Column="1" Content="Update" Command="{Binding ApplyUpdateCommand}" IsEnabled="{Binding !Busy}"
-                      Background="#3FD9D0" Foreground="#073B3F" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
-            </Grid>
-          </Border>
-
-          <!-- LIVE SERVER STATS (polled from /userapi/status) -->
-          <Border Classes="card">
-            <StackPanel Spacing="14">
+            <Border Classes="card" Background="{DynamicResource AccentSoft}" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
+                    IsVisible="{Binding HasUpdate}">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" Classes="label" Text="SERVER STATUS" VerticalAlignment="Center"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-                  <Ellipse Width="9" Height="9" Fill="#79D221" VerticalAlignment="Center" IsVisible="{Binding ServerOnline}"/>
-                  <Ellipse Width="9" Height="9" Fill="#E2574C" VerticalAlignment="Center" IsVisible="{Binding !ServerOnline}"/>
-                  <TextBlock Text="{Binding ServerName}" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                  <TextBlock Text="{Binding ServerStatus}" Foreground="#8FB4C2" VerticalAlignment="Center"/>
-                </StackPanel>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource Ink}" TextWrapping="Wrap">
+                  <Run Text="A new launcher version is available: "/><Run Text="{Binding UpdateVersion}" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+                </TextBlock>
+                <Button Grid.Column="1" Content="Update" Command="{Binding ApplyUpdateCommand}" IsEnabled="{Binding !Busy}"
+                        Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
               </Grid>
-              <Grid ColumnDefinitions="*,*,*">
-                <StackPanel Grid.Column="0">
-                  <TextBlock Text="{Binding PlayersOnline}" Foreground="#3FD9D0" FontSize="30" FontWeight="Bold"/>
-                  <TextBlock Text="players online" Foreground="#8FB4C2" FontSize="12"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1">
-                  <TextBlock Text="{Binding LotsOnline}" Foreground="#79D221" FontSize="30" FontWeight="Bold"/>
-                  <TextBlock Text="lots online" Foreground="#8FB4C2" FontSize="12"/>
-                </StackPanel>
-                <StackPanel Grid.Column="2">
-                  <TextBlock Text="{Binding ServerTimeText}" Foreground="White" FontSize="22" FontWeight="SemiBold"/>
-                  <TextBlock Text="in-game time" Foreground="#8FB4C2" FontSize="12"/>
-                </StackPanel>
-              </Grid>
-              <TextBlock Foreground="#5E83A0" FontSize="11">
-                <Run Text="Game version: "/><Run Text="{Binding ServerGameVersion}" Foreground="#8FB4C2"/>
-              </TextBlock>
-            </StackPanel>
-          </Border>
+            </Border>
 
-          <!-- BUSIEST LOTS -->
-          <StackPanel IsVisible="{Binding StatsAvailable}" Spacing="6">
-            <TextBlock Classes="label" Text="BUSIEST LOTS" Margin="0,4,0,2"/>
-            <ItemsControl ItemsSource="{Binding TopLots}" x:CompileBindings="False">
+            <!-- LIVE SERVER STATS (polled from /userapi/status) -->
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Grid.Column="0" Classes="label" Text="SERVER STATUS" VerticalAlignment="Center"/>
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                    <Ellipse Width="9" Height="9" Fill="{DynamicResource Good}" VerticalAlignment="Center" IsVisible="{Binding ServerOnline}"/>
+                    <Ellipse Width="9" Height="9" Fill="{DynamicResource Bad}" VerticalAlignment="Center" IsVisible="{Binding !ServerOnline}"/>
+                    <TextBlock Text="{Binding ServerName}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding ServerStatus}" Foreground="{DynamicResource Ink2}" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </Grid>
+                <Grid ColumnDefinitions="*,*,*">
+                  <StackPanel Grid.Column="0">
+                    <TextBlock Text="{Binding PlayersOnline}" Foreground="{DynamicResource Accent}" FontSize="30" FontWeight="Bold"/>
+                    <TextBlock Text="players online" Foreground="{DynamicResource Ink3}" FontSize="12"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1">
+                    <TextBlock Text="{Binding LotsOnline}" Foreground="{DynamicResource Ink}" FontSize="30" FontWeight="Bold"/>
+                    <TextBlock Text="lots online" Foreground="{DynamicResource Ink3}" FontSize="12"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="{Binding ServerTimeText}" Foreground="{DynamicResource Ink}" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Text="in-game time" Foreground="{DynamicResource Ink3}" FontSize="12"/>
+                  </StackPanel>
+                </Grid>
+                <TextBlock Foreground="{DynamicResource Ink3}" FontSize="11">
+                  <Run Text="Game version: "/><Run Text="{Binding ServerGameVersion}" Foreground="{DynamicResource Ink2}"/>
+                </TextBlock>
+              </StackPanel>
+            </Border>
+
+            <!-- BUSIEST LOTS -->
+            <StackPanel IsVisible="{Binding StatsAvailable}" Spacing="6">
+              <TextBlock Classes="label" Text="BUSIEST LOTS" Margin="0,4,0,2"/>
+              <ItemsControl ItemsSource="{Binding TopLots}" x:CompileBindings="False">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6" ColumnSpacing="10">
+                      <Border Grid.Column="0" Width="42" Height="42" CornerRadius="5" ClipToBounds="True" Background="{DynamicResource CardAlt}">
+                        <Image asyncImageLoader:ImageLoader.Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
+                      </Border>
+                      <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="{DynamicResource Ink}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="2" Text="{Binding Players}" Foreground="{DynamicResource Accent}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+
+            <TextBlock Classes="label" Text="LATEST NEWS" Margin="0,8,0,0"/>
+            <ItemsControl ItemsSource="{Binding NewsItems}" x:CompileBindings="False">
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6" ColumnSpacing="10">
-                    <Border Grid.Column="0" Width="42" Height="42" CornerRadius="5" ClipToBounds="True" Background="#0A1626">
-                      <Image asyncImageLoader:ImageLoader.Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
-                    </Border>
-                    <TextBlock Grid.Column="1" Text="{Binding Name}" Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Grid.Column="2" Text="{Binding Players}" Foreground="#3FD9D0" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                  </Grid>
+                  <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="{DynamicResource Card}"
+                          BorderBrush="{DynamicResource Line}" BorderThickness="1"
+                          CornerRadius="10" Padding="16,12" Margin="0,0,0,8" Cursor="Hand"
+                          Command="{Binding DataContext.OpenNewsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          CommandParameter="{Binding}">
+                    <StackPanel>
+                      <TextBlock Text="{Binding Title}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                      <TextBlock Text="{Binding Date}" Foreground="{DynamicResource Ink3}" FontSize="11" Margin="0,2,0,4"/>
+                      <TextBlock Text="{Binding Summary}" Foreground="{DynamicResource Ink2}" FontSize="12" TextWrapping="Wrap" MaxLines="3"/>
+                    </StackPanel>
+                  </Button>
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
+            <Button Content="Visit openso.org →" Command="{Binding OpenWebsiteCommand}" HorizontalAlignment="Left"
+                    Background="Transparent" Foreground="{DynamicResource Accent}" FontWeight="SemiBold" Padding="0,4"/>
           </StackPanel>
-
-          <TextBlock Classes="label" Text="LATEST NEWS" Margin="0,8,0,0"/>
-          <ItemsControl ItemsSource="{Binding NewsItems}" x:CompileBindings="False">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="#0E2138"
-                        CornerRadius="10" Padding="16,12" Margin="0,0,0,8" Cursor="Hand"
-                        Command="{Binding DataContext.OpenNewsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                        CommandParameter="{Binding}">
-                  <StackPanel>
-                    <TextBlock Text="{Binding Title}" Foreground="White" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                    <TextBlock Text="{Binding Date}" Foreground="#5E83A0" FontSize="11" Margin="0,2,0,4"/>
-                    <TextBlock Text="{Binding Summary}" Foreground="#8FB4C2" FontSize="12" TextWrapping="Wrap" MaxLines="3"/>
-                  </StackPanel>
-                </Button>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-          <Button Content="Visit openso.org →" Command="{Binding OpenWebsiteCommand}" HorizontalAlignment="Left"
-                  Background="Transparent" Foreground="#3FD9D0" FontWeight="SemiBold" Padding="0,4"/>
-        </StackPanel>
-      </ScrollViewer>
-
-      <!-- INSTALLER -->
-      <ScrollViewer IsVisible="{Binding IsInstaller}" VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="30,28" Spacing="16">
-          <Grid ColumnDefinitions="*,Auto">
-            <StackPanel Grid.Column="0">
-              <TextBlock Classes="h1" Text="Installer"/>
-              <TextBlock Classes="sub" Text="Install OpenSO and its dependencies."/>
-            </StackPanel>
-            <Button Grid.Column="1" VerticalAlignment="Center" Content="Complete Installation"
-                    Command="{Binding InstallCommand}" IsEnabled="{Binding !Busy}"
-                    Background="#3FD9D0" Foreground="#073B3F" FontWeight="Bold" Padding="18,9" CornerRadius="8"/>
-          </Grid>
-
-          <Border Classes="card">
-            <Grid ColumnDefinitions="Auto,*,Auto" >
-              <TextBlock Grid.Column="0" Text="🧩" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
-              <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="OpenSO Client" Foreground="White" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding ClientState}" Classes="sub" TextWrapping="Wrap"/>
-              </StackPanel>
-              <TextBlock Grid.Column="2" Text="{Binding ClientInstalled}" VerticalAlignment="Center" Foreground="#3FD9D0" FontWeight="Bold"/>
-            </Grid>
-          </Border>
-          <Border Classes="card">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-              <TextBlock Grid.Column="0" Text="🎮" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
-              <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="The Sims Online" Foreground="White" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding AssetsState}" Classes="sub" TextWrapping="Wrap"/>
-              </StackPanel>
-              <TextBlock Grid.Column="2" Text="{Binding AssetsInstalled}" VerticalAlignment="Center" Foreground="#3FD9D0" FontWeight="Bold"/>
-            </Grid>
-          </Border>
-          <Border Classes="card">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-              <TextBlock Grid.Column="0" Text="🧊" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
-              <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                <TextBlock Text="3D Mesh Pack" Foreground="White" FontWeight="SemiBold"/>
-                <TextBlock Text="{Binding RemeshState}" Classes="sub" TextWrapping="Wrap"/>
-              </StackPanel>
-              <Button Grid.Column="2" Content="Install" Command="{Binding InstallRemeshCommand}" IsEnabled="{Binding !Busy}"
-                      Background="#13243B" Foreground="#3FD9D0" FontWeight="SemiBold" Padding="14,7" CornerRadius="6" Margin="0,0,12,0"/>
-              <TextBlock Grid.Column="3" Text="{Binding RemeshInstalled}" VerticalAlignment="Center" Foreground="#3FD9D0" FontWeight="Bold"/>
-            </Grid>
-          </Border>
-
-          <TextBlock Classes="sub" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform. The 3D Mesh Pack is optional — it adds higher-quality 3D models used when 3D mode is enabled in Settings."/>
-        </StackPanel>
-      </ScrollViewer>
-
-      <!-- DOWNLOADS -->
-      <StackPanel IsVisible="{Binding IsDownloads}" Margin="30,28" Spacing="16">
-        <TextBlock Classes="h1" Text="Downloads"/>
-        <TextBlock Classes="sub" Text="Active downloads and installation progress."/>
-        <Border Classes="card">
-          <StackPanel Spacing="10">
-            <TextBlock Text="{Binding StatusLine}" Foreground="White" TextWrapping="Wrap"/>
-            <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="10"
-                         Foreground="#3FD9D0" Background="#16314F"/>
-            <TextBlock Text="{Binding ProgressDetail}" Classes="sub" TextWrapping="Wrap"/>
-          </StackPanel>
-        </Border>
-        <TextBlock Classes="sub" Text="Nothing downloading right now." IsVisible="{Binding !Busy}"/>
-      </StackPanel>
-
-      <!-- SETTINGS -->
-      <ScrollViewer IsVisible="{Binding IsSettings}" VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="30,28" Spacing="16" MaxWidth="640" HorizontalAlignment="Left">
-          <TextBlock Classes="h1" Text="Settings"/>
-          <TextBlock Classes="sub" Text="Personalize your game and launcher."/>
-
-          <TextBlock Classes="label" Text="IN-GAME SETTINGS" Margin="0,8,0,0"/>
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="5">
-                <TextBlock Text="Graphics Mode" Foreground="White" FontWeight="SemiBold"/>
-                <ComboBox ItemsSource="{Binding GraphicsModes}" SelectedItem="{Binding GraphicsMode}" HorizontalAlignment="Stretch"/>
-                <TextBlock Classes="sub" Text="DirectX usually performs best on Windows; macOS/Linux use OpenGL."/>
-              </StackPanel>
-              <StackPanel Spacing="5">
-                <TextBlock Text="3D Mode" Foreground="White" FontWeight="SemiBold"/>
-                <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
-                <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
-              </StackPanel>
-              <StackPanel Spacing="5">
-                <TextBlock Text="Refresh rate (Hz)" Foreground="White" FontWeight="SemiBold"/>
-                <NumericUpDown Value="{Binding RefreshRate}" Minimum="30" Maximum="360" Increment="1" FormatString="0"/>
-                <TextBlock Classes="sub" Text="Higher refresh rates give smoother motion (the render rate is decoupled from the sim)."/>
-              </StackPanel>
-            </StackPanel>
-          </Border>
-
-          <TextBlock Classes="label" Text="LAUNCHER SETTINGS" Margin="0,8,0,0"/>
-          <Border Classes="card">
-            <StackPanel Spacing="14">
-              <StackPanel Spacing="5">
-                <TextBlock Text="Live Desktop Notifications" Foreground="White" FontWeight="SemiBold"/>
-                <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding LiveNotifications}" HorizontalAlignment="Stretch"/>
-              </StackPanel>
-              <StackPanel Spacing="5">
-                <TextBlock Text="Closing Behavior" Foreground="White" FontWeight="SemiBold"/>
-                <ComboBox ItemsSource="{Binding ClosingBehaviors}" SelectedItem="{Binding ClosingBehavior}" HorizontalAlignment="Stretch"/>
-              </StackPanel>
-            </StackPanel>
-          </Border>
-        </StackPanel>
-      </ScrollViewer>
-
-      <!-- NOTIFICATIONS -->
-      <StackPanel IsVisible="{Binding IsNotifications}" Margin="30,28" Spacing="14">
-        <TextBlock Classes="h1" Text="Notifications"/>
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding Notifications}">
-            <ItemsControl.ItemTemplate>
-              <DataTemplate>
-                <Border Classes="card" Margin="0,0,0,8">
-                  <TextBlock Text="{Binding}" Foreground="White" TextWrapping="Wrap"/>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
         </ScrollViewer>
-        <TextBlock Classes="sub" Text="No notifications yet." IsVisible="{Binding !Notifications.Count}"/>
-      </StackPanel>
 
-      <!-- ABOUT -->
-      <StackPanel IsVisible="{Binding IsAbout}" Margin="30,28" Spacing="14">
-        <TextBlock Classes="h1" Text="About"/>
-        <Border Classes="card">
-          <StackPanel Spacing="8">
-            <TextBlock Text="{Binding LauncherVersion}" Foreground="White" FontWeight="SemiBold"/>
-            <TextBlock Classes="sub" TextWrapping="Wrap"
-                       Text="OpenSO is a modernized, community-run revival of The Sims Online — free, fair, and built in the open. This launcher installs the OpenSO client and the original TSO game assets, keeps them up to date, and launches the game."/>
-            <TextBlock Classes="sub" TextWrapping="Wrap" Text="Built on FreeSO. Not affiliated with EA or Maxis."/>
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
-              <Button Content="openso.org" Command="{Binding OpenWebsiteCommand}" Background="#13243B" Foreground="#3FD9D0" Padding="14,7" CornerRadius="6"/>
-            </StackPanel>
+        <!-- INSTALLER -->
+        <ScrollViewer IsVisible="{Binding IsInstaller}" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,8,30,28" Spacing="16">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Grid.Column="0">
+                <TextBlock Classes="h1" Text="Installer"/>
+                <TextBlock Classes="sub" Text="Install OpenSO and its dependencies."/>
+              </StackPanel>
+              <Button Grid.Column="1" VerticalAlignment="Center" Content="Complete Installation"
+                      Command="{Binding InstallCommand}" IsEnabled="{Binding !Busy}"
+                      Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" Padding="18,9" CornerRadius="8"/>
+            </Grid>
+
+            <Border Classes="card">
+              <Grid ColumnDefinitions="Auto,*,Auto" >
+                <TextBlock Grid.Column="0" Text="🧩" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="OpenSO Client" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding ClientState}" Classes="sub" TextWrapping="Wrap"/>
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding ClientInstalled}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+              </Grid>
+            </Border>
+            <Border Classes="card">
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" Text="🎮" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="The Sims Online" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding AssetsState}" Classes="sub" TextWrapping="Wrap"/>
+                </StackPanel>
+                <TextBlock Grid.Column="2" Text="{Binding AssetsInstalled}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+              </Grid>
+            </Border>
+            <Border Classes="card">
+              <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="🧊" FontSize="22" VerticalAlignment="Center" Margin="0,0,14,0"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                  <TextBlock Text="3D Mesh Pack" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <TextBlock Text="{Binding RemeshState}" Classes="sub" TextWrapping="Wrap"/>
+                </StackPanel>
+                <Button Grid.Column="2" Content="Install" Command="{Binding InstallRemeshCommand}" IsEnabled="{Binding !Busy}"
+                        Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}" FontWeight="SemiBold" Padding="14,7" CornerRadius="6" Margin="0,0,12,0"/>
+                <TextBlock Grid.Column="3" Text="{Binding RemeshInstalled}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+              </Grid>
+            </Border>
+
+            <TextBlock Classes="sub" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform. The 3D Mesh Pack is optional — it adds higher-quality 3D models used when 3D mode is enabled in Settings."/>
           </StackPanel>
-        </Border>
-      </StackPanel>
+        </ScrollViewer>
 
-    </Grid>
+        <!-- DOWNLOADS -->
+        <StackPanel IsVisible="{Binding IsDownloads}" Margin="30,8,30,28" Spacing="16">
+          <TextBlock Classes="h1" Text="Downloads"/>
+          <TextBlock Classes="sub" Text="Active downloads and installation progress."/>
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <TextBlock Text="{Binding StatusLine}" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+              <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="10"
+                           Foreground="{DynamicResource Accent}" Background="{DynamicResource Track}"/>
+              <TextBlock Text="{Binding ProgressDetail}" Classes="sub" TextWrapping="Wrap"/>
+            </StackPanel>
+          </Border>
+          <TextBlock Classes="sub" Text="Nothing downloading right now." IsVisible="{Binding !Busy}"/>
+        </StackPanel>
+
+        <!-- SETTINGS -->
+        <ScrollViewer IsVisible="{Binding IsSettings}" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="30,8,30,28" Spacing="16" MaxWidth="640" HorizontalAlignment="Left">
+            <TextBlock Classes="h1" Text="Settings"/>
+            <TextBlock Classes="sub" Text="Personalize your game and launcher."/>
+
+            <TextBlock Classes="label" Text="IN-GAME SETTINGS" Margin="0,8,0,0"/>
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Spacing="5">
+                  <TextBlock Text="Graphics Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <ComboBox ItemsSource="{Binding GraphicsModes}" SelectedItem="{Binding GraphicsMode}" HorizontalAlignment="Stretch"/>
+                  <TextBlock Classes="sub" Text="DirectX usually performs best on Windows; macOS/Linux use OpenGL."/>
+                </StackPanel>
+                <StackPanel Spacing="5">
+                  <TextBlock Text="3D Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
+                  <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
+                </StackPanel>
+                <StackPanel Spacing="5">
+                  <TextBlock Text="Refresh rate (Hz)" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <NumericUpDown Value="{Binding RefreshRate}" Minimum="30" Maximum="360" Increment="1" FormatString="0"/>
+                  <TextBlock Classes="sub" Text="Higher refresh rates give smoother motion (the render rate is decoupled from the sim)."/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <TextBlock Classes="label" Text="LAUNCHER SETTINGS" Margin="0,8,0,0"/>
+            <Border Classes="card">
+              <StackPanel Spacing="14">
+                <StackPanel Spacing="5">
+                  <TextBlock Text="Live Desktop Notifications" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding LiveNotifications}" HorizontalAlignment="Stretch"/>
+                </StackPanel>
+                <StackPanel Spacing="5">
+                  <TextBlock Text="Closing Behavior" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <ComboBox ItemsSource="{Binding ClosingBehaviors}" SelectedItem="{Binding ClosingBehavior}" HorizontalAlignment="Stretch"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+
+        <!-- NOTIFICATIONS -->
+        <StackPanel IsVisible="{Binding IsNotifications}" Margin="30,8,30,28" Spacing="14">
+          <TextBlock Classes="h1" Text="Notifications"/>
+          <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Notifications}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Classes="card" Margin="0,0,0,8">
+                    <TextBlock Text="{Binding}" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+          <TextBlock Classes="sub" Text="No notifications yet." IsVisible="{Binding !Notifications.Count}"/>
+        </StackPanel>
+
+        <!-- ABOUT -->
+        <StackPanel IsVisible="{Binding IsAbout}" Margin="30,8,30,28" Spacing="14">
+          <TextBlock Classes="h1" Text="About"/>
+          <Border Classes="card">
+            <StackPanel Spacing="8">
+              <TextBlock Text="{Binding LauncherVersion}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+              <TextBlock Classes="sub" TextWrapping="Wrap"
+                         Text="OpenSO is a modernized, community-run revival of The Sims Online — free, fair, and built in the open. This launcher installs the OpenSO client and the original TSO game assets, keeps them up to date, and launches the game."/>
+              <TextBlock Classes="sub" TextWrapping="Wrap" Text="Built on FreeSO. Not affiliated with EA or Maxis."/>
+              <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
+                <Button Content="openso.org" Command="{Binding OpenWebsiteCommand}" Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}" Padding="14,7" CornerRadius="6"/>
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+      </Grid>
+    </Border>
   </Grid>
 </Window>

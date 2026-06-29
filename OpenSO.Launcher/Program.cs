@@ -11,6 +11,6 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            .WithInterFont()
+            // No .WithInterFont(): use the OS system font (SF Pro on macOS, Segoe UI on Windows).
             .LogToTrace();
 }
