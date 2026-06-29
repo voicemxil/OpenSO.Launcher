@@ -58,6 +58,73 @@ jobs:
         if: runner.os != 'Windows'
         run: ( cd publish && zip -r "../OpenSO.Launcher-${{ matrix.rid }}.zip" . )
 
+      - name: macOS .app bundle + DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.ver.outputs.num }}"
+          APP="OpenSO Launcher.app"
+          rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp -R publish/. "$APP/Contents/MacOS/"
+          chmod +x "$APP/Contents/MacOS/OpenSO.Launcher"
+
+          PL="$APP/Contents/Info.plist"
+          printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0"><dict></dict></plist>' > "$PL"
+          plutil -insert CFBundleName               -string "OpenSO Launcher"     "$PL"
+          plutil -insert CFBundleDisplayName        -string "OpenSO Launcher"     "$PL"
+          plutil -insert CFBundleIdentifier         -string "org.openso.launcher" "$PL"
+          plutil -insert CFBundleExecutable         -string "OpenSO.Launcher"     "$PL"
+          plutil -insert CFBundlePackageType        -string "APPL"                "$PL"
+          plutil -insert CFBundleShortVersionString -string "$VER"                "$PL"
+          plutil -insert CFBundleVersion            -string "$VER"                "$PL"
+          plutil -insert CFBundleIconFile           -string "openso"              "$PL"
+          plutil -insert LSMinimumSystemVersion     -string "11.0"                "$PL"
+          plutil -insert NSHighResolutionCapable    -bool true                    "$PL"
+
+          # Liquid Glass icon (macOS 26+): if an Icon Composer .icon is committed, compile it with actool
+          # (ships with Xcode on the runner) into Assets.car and reference it via CFBundleIconName. No .icon
+          # yet -> the legacy .icns below is the only icon.
+          ICON="OpenSO.Launcher/Assets/openso.icon"
+          if [ -e "$ICON" ]; then
+            xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
+              --output-partial-info-plist /tmp/icon.plist --app-icon Icon --include-all-app-icons \
+              --enable-on-demand-resources NO --development-region en \
+              --target-device mac --minimum-deployment-target 26.0 --platform macosx
+            plutil -insert CFBundleIconName -string Icon "$PL"
+            echo "Embedded Liquid Glass .icon (Assets.car)."
+          else
+            echo "No openso.icon committed yet — legacy .icns only."
+          fi
+
+          # Legacy .icns from the glyph SVG (always; macOS < 26 fallback + universal).
+          brew install librsvg >/dev/null
+          rsvg-convert -w 1024 -h 1024 "OpenSO.Launcher/Assets/openso-glyph.svg" -o icon_1024.png
+          mkdir -p icon.iconset
+          for p in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 256:128x128@2x 256:256x256 512:256x256@2x 512:512x512 1024:512x512@2x; do
+            sz="${p%%:*}"; nm="${p##*:}"
+            sips -z "$sz" "$sz" icon_1024.png --out "icon.iconset/icon_${nm}.png" >/dev/null
+          done
+          iconutil -c icns icon.iconset -o "$APP/Contents/Resources/openso.icns"
+
+          # Ad-hoc sign so the app launches (Apple Silicon kills unsigned native code).
+          codesign --force --deep -s - "$APP"
+
+          # DMG with a drag-to-Applications symlink (hdiutil only — no Finder/create-dmg dependency).
+          DMG="OpenSO-Launcher-${{ matrix.rid }}.dmg"
+          STAGE="$RUNNER_TEMP/dmg"; rm -rf "$STAGE"; mkdir -p "$STAGE"
+          cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
+          hdiutil create -volname "OpenSO Launcher" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+
+      - name: Upload DMG
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-dmg-${{ matrix.rid }}
+          path: OpenSO-Launcher-${{ matrix.rid }}.dmg
+
       - name: Zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -107,4 +174,5 @@ jobs:
           files: |
             artifacts/*.zip
             artifacts/*.exe
+            artifacts/*.dmg
           fail_on_unmatched_files: true
