@@ -48,7 +48,7 @@
       <Setter Property="FontSize" Value="22"/>
       <Setter Property="FontWeight" Value="Bold"/>
     </Style>
-    <Style Selector="TextBlock.sub"><Setter Property="Foreground" Value="{DynamicResource Ink2}"/><Setter Property="FontSize" Value="13"/></Style>
+    <Style Selector="TextBlock.sub"><Setter Property="Foreground" Value="{DynamicResource Ink2}"/><Setter Property="FontSize" Value="13"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
     <Style Selector="TextBlock.label"><Setter Property="Foreground" Value="{DynamicResource Ink2}"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="FontSize" Value="12"/></Style>
     <Style Selector="Border.card"><Setter Property="Background" Value="{DynamicResource Card}"/><Setter Property="BorderBrush" Value="{DynamicResource Line}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="CornerRadius" Value="12"/><Setter Property="Padding" Value="18,16"/></Style>
   </Window.Styles>
@@ -225,7 +225,7 @@
               </Grid>
             </Border>
 
-            <TextBlock Classes="sub" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform. The 3D Mesh Pack is optional — it adds higher-quality 3D models used when 3D mode is enabled in Settings."/>
+            <TextBlock Classes="sub" TextWrapping="Wrap" Text="Installing the client also downloads the original TSO assets (~1.27 GB, from the Internet Archive) and the runtime dependencies for your platform. The 3D Mesh Pack is optional — it adds higher-quality 3D models used when 3D mode is enabled in Settings."/>
           </StackPanel>
         </ScrollViewer>
 
