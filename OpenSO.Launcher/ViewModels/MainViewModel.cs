@@ -159,8 +159,10 @@ public partial class MainViewModel : ObservableObject
         ServerTimeText = s.ServerTime.ToString("HH:mm 'UTC'");
         var shard = s.Shards?.FirstOrDefault();
         ServerName = shard?.Name ?? "OpenSO";
-        ServerStatus = shard?.Status ?? "Online";
-        ServerOnline = string.Equals(shard?.Status, "Online", StringComparison.OrdinalIgnoreCase);
+        // ShardStatus enum: Up / Down / Busy / Full / Closed / Frontier. Up/Busy/Full = reachable.
+        var st = shard?.Status ?? "Down";
+        ServerOnline = st is "Up" or "Busy" or "Full";
+        ServerStatus = st == "Up" ? "Online" : st; // friendlier label for the common case
         TopLots.Clear();
         foreach (var l in s.TopLots ?? Array.Empty<TopLot>()) TopLots.Add(l);
     }
