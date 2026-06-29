@@ -13,10 +13,15 @@ public partial class MainWindow : Window
 {
     private readonly Bitmap _wordmarkDark;
     private readonly Bitmap _wordmarkLight;
+    private readonly Image? _logo;
 
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+
+        // Resolve named controls explicitly: with AvaloniaXamlLoader.Load(this) the generated
+        // x:Name backing fields aren't guaranteed to be assigned, so use the name scope.
+        _logo = this.FindControl<Image>("LogoImage");
 
         // Theme-adaptive wordmark: white "Open" on the dark sidebar, navy "Open" on the light one.
         _wordmarkDark = LoadAsset("openso-wordmark-ondark.png");
@@ -43,12 +48,16 @@ public partial class MainWindow : Window
         {
             ExtendClientAreaToDecorationsHint = true;
             ExtendClientAreaTitleBarHeightHint = -1;
-            LogoImage.Margin = new Thickness(22, 52, 0, 8);
+            if (_logo is not null)
+                _logo.Margin = new Thickness(22, 52, 0, 8);
         }
     }
 
     private void UpdateWordmark()
-        => LogoImage.Source = ActualThemeVariant == ThemeVariant.Light ? _wordmarkLight : _wordmarkDark;
+    {
+        if (_logo is not null)
+            _logo.Source = ActualThemeVariant == ThemeVariant.Light ? _wordmarkLight : _wordmarkDark;
+    }
 
     private static Bitmap LoadAsset(string file)
         => new(AssetLoader.Open(new Uri($"avares://OpenSO.Launcher/Assets/{file}")));
