@@ -1,5 +1,8 @@
+using System;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 
 namespace OpenSO.Launcher.Views;
 
@@ -19,10 +22,30 @@ public partial class MainWindow : Window
             WindowTransparencyLevel.Blur,
         };
 
-        // Integrate the native window controls (macOS traffic lights / Windows caption buttons)
-        // into our own frame instead of a separate OS title-bar strip above the UI.
-        // (Avalonia 12 dropped ExtendClientAreaChromeHints; the system chrome is the default.)
-        ExtendClientAreaToDecorationsHint = true;
-        ExtendClientAreaTitleBarHeightHint = -1;
+        // Only macOS gets the integrated frame: extend the client area so the traffic lights float
+        // over the frosted sidebar instead of sitting in a separate strip above the UI, and push the
+        // logo down to clear them. On Windows/Linux we keep the real native title bar (draggable,
+        // normal min/max/close, no stray fullscreen toggle) — Avalonia 12's extended chrome there
+        // isn't draggable and adds a fullscreen button we don't want.
+        if (OperatingSystem.IsMacOS())
+        {
+            ExtendClientAreaToDecorationsHint = true;
+            ExtendClientAreaTitleBarHeightHint = -1;
+            LogoImage.Margin = new Thickness(22, 52, 0, 8);
+        }
+    }
+
+    protected override void OnOpened(EventArgs e)
+    {
+        base.OnOpened(e);
+
+        // If the compositor granted no transparency (e.g. Mica unavailable on this Windows build),
+        // a Transparent window background would leak the desktop through the translucent sidebar.
+        // Fall back to an opaque themed background so the sidebar reads as a clean solid panel.
+        if (ActualTransparencyLevel == WindowTransparencyLevel.None &&
+            this.TryFindResource("Bg", ActualThemeVariant, out var bg) && bg is IBrush brush)
+        {
+            Background = brush;
+        }
     }
 }

@@ -31,16 +31,16 @@
     <Style Selector="Button.nav.active">
       <Setter Property="Background" Value="#1AFFFFFF"/>
       <Setter Property="Foreground" Value="White"/>
-      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource TealFill}"/>
     </Style>
     <!-- Keep the blue active indicator visible while the cursor is over (or pressing) the active tab. Fluent's
          pointerover/pressed states override the content presenter's BorderBrush, which hid the indicator under
          the mouse — it wasn't an animation delay, the indicator just vanished on hover. -->
     <Style Selector="Button.nav.active:pointerover /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource TealFill}"/>
     </Style>
     <Style Selector="Button.nav.active:pressed /template/ ContentPresenter#PART_ContentPresenter">
-      <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource TealFill}"/>
     </Style>
     <!-- Section heading -->
     <Style Selector="TextBlock.h1">
@@ -60,14 +60,14 @@
       <!-- Top inset (52) keeps the logo clear of the macOS traffic lights, which now float
            over the frosted sidebar (window client area extends under the decorations). -->
       <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
-        <!-- Logo lockup -->
-        <Image Grid.Row="0" Source="avares://OpenSO.Launcher/Assets/openso-wordmark.png"
-               Height="40" HorizontalAlignment="Left" Margin="22,52,0,8" Stretch="Uniform"/>
+        <!-- Logo lockup. Margin top is bumped on macOS (code-behind) to clear the traffic lights. -->
+        <Image Grid.Row="0" x:Name="LogoImage" Source="avares://OpenSO.Launcher/Assets/openso-wordmark.png"
+               Height="40" HorizontalAlignment="Left" Margin="22,22,0,8" Stretch="Uniform"/>
 
         <!-- PLAY -->
         <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"
                 Content="{Binding PlayButtonText}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" FontSize="16" Padding="0,12" CornerRadius="10"/>
+                Background="{DynamicResource TealFill}" Foreground="{DynamicResource TealInk}" FontWeight="Bold" FontSize="16" Padding="0,12" CornerRadius="10"/>
         <TextBlock Grid.Row="2" Text="{Binding Clock}" Foreground="#8A8E94" FontSize="12"
                    HorizontalAlignment="Center" Margin="0,2,0,14"/>
 
@@ -87,23 +87,22 @@
 
     <!-- ============ CONTENT ============ -->
     <Border Grid.Column="1" Background="{DynamicResource Bg}">
-      <!-- Top inset (34) leaves room under the overlaid window caption buttons. -->
-      <Grid Margin="0,34,0,0">
+      <Grid>
 
         <!-- HOME -->
         <ScrollViewer IsVisible="{Binding IsHome}" VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="30,8,30,28" Spacing="16">
+          <StackPanel Margin="30,22,30,28" Spacing="16">
             <TextBlock Classes="h1" Text="Welcome to OpenSO"/>
             <TextBlock Classes="sub" Text="The Sims Online, reborn — free, fair, and built in the open."/>
 
-            <Border Classes="card" Background="{DynamicResource AccentSoft}" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
+            <Border Classes="card" Background="{DynamicResource UpdateBg}" BorderBrush="{DynamicResource TealFill}" BorderThickness="1"
                     IsVisible="{Binding HasUpdate}">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource Ink}" TextWrapping="Wrap">
-                  <Run Text="A new launcher version is available: "/><Run Text="{Binding UpdateVersion}" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+                <TextBlock Grid.Column="0" VerticalAlignment="Center" Foreground="{DynamicResource UpdateInk}" TextWrapping="Wrap">
+                  <Run Text="A new launcher version is available: "/><Run Text="{Binding UpdateVersion}" Foreground="{DynamicResource TealFill}" FontWeight="Bold"/>
                 </TextBlock>
                 <Button Grid.Column="1" Content="Update" Command="{Binding ApplyUpdateCommand}" IsEnabled="{Binding !Busy}"
-                        Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
+                        Background="{DynamicResource TealFill}" Foreground="{DynamicResource TealInk}" FontWeight="Bold" Padding="16,6" CornerRadius="6"/>
               </Grid>
             </Border>
 
@@ -125,7 +124,7 @@
                     <TextBlock Text="players online" Foreground="{DynamicResource Ink3}" FontSize="12"/>
                   </StackPanel>
                   <StackPanel Grid.Column="1">
-                    <TextBlock Text="{Binding LotsOnline}" Foreground="{DynamicResource Ink}" FontSize="30" FontWeight="Bold"/>
+                    <TextBlock Text="{Binding LotsOnline}" Foreground="{DynamicResource Good}" FontSize="30" FontWeight="Bold"/>
                     <TextBlock Text="lots online" Foreground="{DynamicResource Ink3}" FontSize="12"/>
                   </StackPanel>
                   <StackPanel Grid.Column="2">
@@ -182,7 +181,7 @@
 
         <!-- INSTALLER -->
         <ScrollViewer IsVisible="{Binding IsInstaller}" VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="30,8,30,28" Spacing="16">
+          <StackPanel Margin="30,22,30,28" Spacing="16">
             <Grid ColumnDefinitions="*,Auto">
               <StackPanel Grid.Column="0">
                 <TextBlock Classes="h1" Text="Installer"/>
@@ -190,7 +189,7 @@
               </StackPanel>
               <Button Grid.Column="1" VerticalAlignment="Center" Content="Complete Installation"
                       Command="{Binding InstallCommand}" IsEnabled="{Binding !Busy}"
-                      Background="{DynamicResource Accent}" Foreground="{DynamicResource OnAccent}" FontWeight="Bold" Padding="18,9" CornerRadius="8"/>
+                      Background="{DynamicResource TealFill}" Foreground="{DynamicResource TealInk}" FontWeight="Bold" Padding="18,9" CornerRadius="8"/>
             </Grid>
 
             <Border Classes="card">
@@ -231,7 +230,7 @@
         </ScrollViewer>
 
         <!-- DOWNLOADS -->
-        <StackPanel IsVisible="{Binding IsDownloads}" Margin="30,8,30,28" Spacing="16">
+        <StackPanel IsVisible="{Binding IsDownloads}" Margin="30,22,30,28" Spacing="16">
           <TextBlock Classes="h1" Text="Downloads"/>
           <TextBlock Classes="sub" Text="Active downloads and installation progress."/>
           <Border Classes="card">
@@ -247,7 +246,7 @@
 
         <!-- SETTINGS -->
         <ScrollViewer IsVisible="{Binding IsSettings}" VerticalScrollBarVisibility="Auto">
-          <StackPanel Margin="30,8,30,28" Spacing="16" MaxWidth="640" HorizontalAlignment="Left">
+          <StackPanel Margin="30,22,30,28" Spacing="16" MaxWidth="640" HorizontalAlignment="Left">
             <TextBlock Classes="h1" Text="Settings"/>
             <TextBlock Classes="sub" Text="Personalize your game and launcher."/>
 
@@ -289,7 +288,7 @@
         </ScrollViewer>
 
         <!-- NOTIFICATIONS -->
-        <StackPanel IsVisible="{Binding IsNotifications}" Margin="30,8,30,28" Spacing="14">
+        <StackPanel IsVisible="{Binding IsNotifications}" Margin="30,22,30,28" Spacing="14">
           <TextBlock Classes="h1" Text="Notifications"/>
           <ScrollViewer VerticalScrollBarVisibility="Auto">
             <ItemsControl ItemsSource="{Binding Notifications}">
@@ -306,7 +305,7 @@
         </StackPanel>
 
         <!-- ABOUT -->
-        <StackPanel IsVisible="{Binding IsAbout}" Margin="30,8,30,28" Spacing="14">
+        <StackPanel IsVisible="{Binding IsAbout}" Margin="30,22,30,28" Spacing="14">
           <TextBlock Classes="h1" Text="About"/>
           <Border Classes="card">
             <StackPanel Spacing="8">
