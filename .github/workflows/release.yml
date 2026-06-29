@@ -93,15 +93,22 @@ jobs:
             NEWEST_XCODE="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
             if [ -n "$NEWEST_XCODE" ]; then sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer" || true; fi
             echo "Using $(xcodebuild -version 2>/dev/null | head -1); actool: $(xcrun --find actool 2>/dev/null)"
+            # actool names the app icon after the .icon basename (here "openso"), NOT "Icon".
+            ICON_BASE="$(basename "$ICON" .icon)"
             # Best-effort: if the runner's actool can't open the Icon Composer 2 export (Xcode too old, or
             # a macOS 27-only effect like refractivity), DON'T fail the release — fall back to the legacy
             # .icns built below (macOS auto-containers it in Liquid Glass anyway).
             if xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
-                 --output-partial-info-plist /tmp/icon.plist --app-icon Icon --include-all-app-icons \
+                 --output-partial-info-plist /tmp/icon.plist --app-icon "$ICON_BASE" --include-all-app-icons \
                  --enable-on-demand-resources NO --development-region en \
                  --target-device mac --minimum-deployment-target 26.0 --platform macosx; then
-              plutil -insert CFBundleIconName -string Icon "$PL"
-              echo "Embedded Liquid Glass .icon (Assets.car)."
+              echo "--- actool partial Info.plist ---"; cat /tmp/icon.plist 2>/dev/null || true
+              # Use the icon name actool actually wrote (authoritative), not a hardcoded guess — otherwise
+              # CFBundleIconName points at nothing and macOS falls back to the legacy CFBundleIconFile.
+              ICON_NAME="$(plutil -extract CFBundleIconName raw -o - /tmp/icon.plist 2>/dev/null || true)"
+              [ -z "$ICON_NAME" ] && ICON_NAME="$ICON_BASE"
+              plutil -replace CFBundleIconName -string "$ICON_NAME" "$PL" 2>/dev/null || plutil -insert CFBundleIconName -string "$ICON_NAME" "$PL"
+              echo "Embedded Liquid Glass .icon (Assets.car) as CFBundleIconName=$ICON_NAME."
             else
               echo "::warning::actool could not compile $ICON on this runner's Xcode — shipping the legacy .icns (macOS still containers it). Try an export without macOS 27-only effects, or commit a pre-built Assets.car."
             fi
