@@ -7,10 +7,9 @@ using System.Runtime.InteropServices;
 namespace OpenSO.Launcher.Services;
 
 /// <summary>
-/// Launches the installed OpenSO/FreeSO client — port of fsolauncher.js launchGame() and
-/// FSO.Patcher.StartFreeSO(). Builds the same argument set the upstream launcher used and starts
-/// the process per-OS (Windows: OpenSO.exe directly; macOS/Linux: the freeso .command shell
-/// scripts the client ships, which invoke mono). The launcher process can then exit/minimize.
+/// Launches the installed OpenSO client. Builds the same argument set the upstream launcher used and
+/// starts the native, self-contained apphost directly per-OS (Windows: OpenSO.exe; macOS/Linux: the
+/// "OpenSO" apphost). The launcher process can then exit/minimize.
 /// </summary>
 public sealed class GameLauncher
 {
@@ -54,37 +53,22 @@ public sealed class GameLauncher
         }
         else
         {
-            // macOS/Linux: the client ships a launch script that sets up mono + the right paths.
-            var script = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                ? Path.Combine(installDir, "freeso.command")
-                : Path.Combine(installDir, "freeso-linux.command");
-
-            if (File.Exists(script))
+            // macOS/Linux: the client is a self-contained NATIVE build (apphost named "OpenSO", no
+            // extension) — run it directly. The old Mono path (freeso.command / `mono OpenSO.exe`) is
+            // gone: there's no Mono and no .exe anymore. The bare apphost sits at the install root even
+            // on macOS (where OpenSO.app also exists); running it works for both arches and finds the
+            // sibling Content/ folder.
+            var exe = Path.Combine(installDir, "OpenSO");
+            if (!File.Exists(exe))
+                throw new FileNotFoundException("OpenSO executable not found in the install.", exe);
+            TryMakeExecutable(exe);
+            psi = new ProcessStartInfo
             {
-                TryMakeExecutable(script);
-                psi = new ProcessStartInfo
-                {
-                    FileName = "/bin/sh",
-                    WorkingDirectory = installDir,
-                    UseShellExecute = false,
-                };
-                psi.ArgumentList.Add(script);
-                foreach (var a in args) psi.ArgumentList.Add(a);
-            }
-            else
-            {
-                // Fallback (matches StartFreeSO): run the .exe through mono directly.
-                var mono = RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                    ? "/Library/Frameworks/Mono.framework/Commands/mono" : "/usr/bin/mono";
-                psi = new ProcessStartInfo
-                {
-                    FileName = File.Exists(mono) ? mono : "mono",
-                    WorkingDirectory = installDir,
-                    UseShellExecute = false,
-                };
-                psi.ArgumentList.Add("OpenSO.exe");
-                foreach (var a in args) psi.ArgumentList.Add(a);
-            }
+                FileName = exe,
+                WorkingDirectory = installDir,
+                UseShellExecute = false,
+            };
+            foreach (var a in args) psi.ArgumentList.Add(a);
         }
 
         var proc = Process.Start(psi)

@@ -50,10 +50,12 @@ public sealed class FsoInstaller : IComponentInstaller
 
         try
         {
-            // Step 3 + 4: ensure dir, extract.
+            // Step 3 + 4: ensure dir, extract. Preserve unix permissions so the native macOS/Linux
+            // apphost (and OpenSO.app's executable) keep their +x bit — otherwise the game can't launch
+            // ("can't be opened" / permission denied).
             Directory.CreateDirectory(installPath);
             await ZipExtractor.ExtractAsync(tempZip, installPath,
-                Scale(progress, "client", 0.70, 0.92, "Extracting client files… "), preservePermissions: false, ct);
+                Scale(progress, "client", 0.70, 0.92, "Extracting client files… "), preservePermissions: true, ct);
 
             // Step 5: register the install.
             progress.Report(new ProgressReport("client", 0.93, "Registering install…"));
