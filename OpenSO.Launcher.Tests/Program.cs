@@ -34,6 +34,10 @@ internal static class Program
         Test("FsoInstaller.VerifyClientInstall rejects a truncated client", TestVerifyRejectsTruncated);
         Test("FsoInstaller.VerifyClientInstall accepts a complete client", TestVerifyAcceptsComplete);
         Test("FsoInstaller.SwapIntoPlace replaces install + preserves a backup", TestSwapIntoPlace);
+        Test("FsoInstaller.PickFullClientAsset picks the full zip, not the delta/manifest", TestPickFullClientAsset);
+
+        if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
+            await LiveInstallRepro();
 
         Console.WriteLine();
         Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : $"{_failures} TEST(S) FAILED");
@@ -203,6 +207,62 @@ internal static class Program
         Assert(!File.Exists(Path.Combine(install, "old.txt")), "old files were swapped out");
         Assert(Directory.Exists(backup) && File.Exists(Path.Combine(backup, "old.txt")), "previous install preserved in backup");
         Assert(!Directory.Exists(staging), "staging dir moved into place");
+    }
+
+    private static void TestPickFullClientAsset()
+    {
+        // A real v0.1.23 release lists these three "client win-x64" assets. The picker must choose the FULL
+        // zip — NOT the incremental delta (a partial fileset -> broken/looping install) or the manifest.
+        var assets = new (string?, string?)[]
+        {
+            ("OpenSO-client-win-x64.incremental.zip", "u-incremental"),
+            ("OpenSO-client-win-x64.manifest.json",   "u-manifest"),
+            ("OpenSO-client-win-x64.zip",             "u-full"),
+            ("OpenSO-client-linux-x64.zip",           "u-linux"),
+            ("OpenSO-client-osx-arm64.zip",           "u-osx"),
+        };
+        Assert(FsoInstaller.PickFullClientAsset(assets, "win-x64") == "u-full",
+            "must pick the full win-x64 client zip, not the incremental/manifest");
+        // Order independence: delta listed after the full zip must still not win.
+        var reordered = new (string?, string?)[]
+        {
+            ("OpenSO-client-win-x64.zip",             "u-full"),
+            ("OpenSO-client-win-x64.incremental.zip", "u-incremental"),
+        };
+        Assert(FsoInstaller.PickFullClientAsset(reordered, "win-x64") == "u-full", "full zip wins regardless of order");
+    }
+
+    // Diagnostic: run the REAL client update the launcher performs (resolve latest -> download ->
+    // stage -> verify -> swap) against a throwaway install dir seeded with an old version.txt, and print
+    // exactly what happens. Gated on OPENSO_LIVE_INSTALL_REPRO=1 (does a full ~340MB download).
+    private static async Task LiveInstallRepro()
+    {
+        Console.WriteLine("\n--- LIVE INSTALL REPRO ---");
+        var root = Path.Combine(NewTmp(), "OpenSO");
+        var fso = Path.Combine(root, "FSO");
+        Directory.CreateDirectory(fso);
+        File.WriteAllText(Path.Combine(fso, "version.txt"), "v0.1.22\n"); // simulate the current install
+        File.WriteAllText(Path.Combine(fso, "stale.txt"), "old");
+
+        var cfg = new LauncherConfig();
+        Console.WriteLine($"ClientManifestUrl = {cfg.ClientManifestUrl}");
+        Console.WriteLine($"ClientReleaseFeed = {cfg.ClientReleaseFeed}");
+        var installer = new FsoInstaller(cfg);
+        var prog = new Progress<ProgressReport>(r => { /* quiet */ });
+        try
+        {
+            await installer.InstallAsync(fso, prog);
+            var vt = Path.Combine(fso, "version.txt");
+            Console.WriteLine("RESULT: install returned OK");
+            Console.WriteLine("  version.txt now = " + (File.Exists(vt) ? File.ReadAllText(vt).Trim() : "<MISSING>"));
+            Console.WriteLine("  file count now  = " + Directory.EnumerateFiles(fso, "*", SearchOption.AllDirectories).Count());
+            Console.WriteLine("  stale.txt gone? = " + (!File.Exists(Path.Combine(fso, "stale.txt"))));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("RESULT: install THREW -> " + ex.GetType().Name + ": " + ex.Message);
+            if (ex.InnerException != null) Console.WriteLine("  inner: " + ex.InnerException.Message);
+        }
     }
 
     // ---- harness ----

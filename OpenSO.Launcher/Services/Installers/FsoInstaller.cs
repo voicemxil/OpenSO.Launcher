@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -170,10 +171,8 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         catch { /* fall through to GitHub */ }
 
-        // 2) GitHub releases fallback. A dev-N release publishes one client asset PER platform
-        //    (OpenSO-client-win-x64.zip, -linux-x64, -osx-x64, -osx-arm64), so "contains client" alone
-        //    isn't enough — it would grab whichever OS's zip is listed first. Prefer the asset whose name
-        //    also contains THIS machine's RID; only fall back to the first "client" asset if none match.
+        // 2) GitHub releases fallback. See PickFullClientAsset for the selection rules (per-platform +
+        //    must be the FULL client zip, not the incremental delta / manifest).
         try
         {
             using var ghResp = await GetAsync(_config.ClientReleaseFeed, ct);
@@ -181,23 +180,42 @@ public sealed class FsoInstaller : IComponentInstaller
             using var doc = JsonDocument.Parse(await ghResp.Content.ReadAsStringAsync(ct));
             if (doc.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
-                var rid = CurrentRid();
-                string? genericClient = null;
+                var list = new List<(string? name, string? url)>();
                 foreach (var asset in assets.EnumerateArray())
-                {
-                    var name = asset.TryGetProperty("name", out var n) ? n.GetString() : null;
-                    if (name == null || !name.Contains("client", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!asset.TryGetProperty("browser_download_url", out var url)) continue;
-                    var u = url.GetString();
-                    if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return u; // exact platform match
-                    genericClient ??= u; // remember the first client asset as a last resort
-                }
-                if (genericClient != null) return genericClient;
+                    list.Add((asset.TryGetProperty("name", out var n) ? n.GetString() : null,
+                              asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null));
+                var picked = PickFullClientAsset(list, CurrentRid());
+                if (picked != null) return picked;
             }
         }
         catch { /* no URL */ }
 
         return null;
+    }
+
+    /// <summary>
+    /// Picks the FULL client zip for <paramref name="rid"/> from a release's assets. A release publishes
+    /// several assets whose names contain "client" AND the RID: the full client zip
+    /// (OpenSO-client-win-x64.zip), the incremental delta zip (…-win-x64.incremental.zip), and its manifest
+    /// (…-win-x64.manifest.json). The delta is only the CHANGED files and the manifest isn't even a zip —
+    /// installing either yields a broken, verification-failing client (and an "update again" loop). So match
+    /// ONLY a real full ".zip" that is NOT the incremental, preferring the exact-RID asset then any full
+    /// client zip. (Before incremental deltas existed there was one matching asset, so the old "first name
+    /// contains client+rid" logic happened to work.)
+    /// </summary>
+    internal static string? PickFullClientAsset(IEnumerable<(string? name, string? url)> assets, string rid)
+    {
+        string? generic = null;
+        foreach (var (name, url) in assets)
+        {
+            if (name == null || url == null) continue;
+            if (!name.Contains("client", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;       // excludes .manifest.json
+            if (name.Contains("incremental", StringComparison.OrdinalIgnoreCase)) continue; // excludes the delta zip
+            if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return url;         // exact platform match
+            generic ??= url;                                                                // any full client zip
+        }
+        return generic;
     }
 
     /// <summary>
