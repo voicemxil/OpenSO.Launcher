@@ -27,6 +27,7 @@
     <Compile Include="..\OpenSO.Launcher\Services\Installers\TsoInstaller.cs" Link="src\TsoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\MonoInstaller.cs" Link="src\MonoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\SdlInstaller.cs" Link="src\SdlInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\RmsInstaller.cs" Link="src\RmsInstaller.cs" />
   </ItemGroup>
 
   <ItemGroup>

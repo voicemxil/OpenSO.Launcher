@@ -44,30 +44,107 @@ public sealed class FsoInstaller : IComponentInstaller
             ?? throw new InvalidOperationException("Could not obtain OpenSO client release information.");
 
         // Step 2: download.
-        var tempZip = Path.Combine(Path.GetTempPath(), $"openso-client-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.zip");
+        var stamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var tempZip = Path.Combine(Path.GetTempPath(), $"openso-client-{stamp}.zip");
         var dl = new DownloadService(zipUrl, tempZip);
         await dl.RunAsync(Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
 
+        // ATOMIC UPDATE. Never extract directly into the live install dir: an interrupted extract (network
+        // drop, I/O error, cancellation, crash) would leave it half-gutted with the self-contained .NET
+        // runtime files deleted and no way back — an unlaunchable client ("install .NET Desktop Runtime").
+        // Instead: extract into a sibling STAGING dir, verify it's a complete client, then swap it into
+        // place (moving the old install aside as a BACKUP first, restoring it if the swap fails). Staging
+        // and backup are siblings of installPath so the moves are same-volume atomic renames.
+        var name = Path.GetFileName(installPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var parent = Directory.GetParent(installPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))?.FullName
+                     ?? Path.GetTempPath();
+        var staging = Path.Combine(parent, $".{name}.staging-{stamp}");
+        var backup = Path.Combine(parent, $".{name}.backup-{stamp}");
+
         try
         {
-            // Step 3 + 4: ensure dir, extract. Preserve unix permissions so the native macOS/Linux
-            // apphost (and OpenSO.app's executable) keep their +x bit — otherwise the game can't launch
-            // ("can't be opened" / permission denied).
-            Directory.CreateDirectory(installPath);
-            await ZipExtractor.ExtractAsync(tempZip, installPath,
-                Scale(progress, "client", 0.70, 0.92, "Extracting client files… "), preservePermissions: true, ct);
+            // Step 3 + 4: extract into STAGING. Preserve unix permissions so the native macOS/Linux apphost
+            // (and OpenSO.app's executable) keep their +x bit — otherwise the game can't launch.
+            TryDeleteDir(staging);
+            await ZipExtractor.ExtractAsync(tempZip, staging,
+                Scale(progress, "client", 0.70, 0.90, "Extracting client files… "), preservePermissions: true, ct);
+
+            // Step 4b: verify the staged client is COMPLETE before we touch the live install. This is the
+            // guard against shipping/keeping a truncated extract (the exact failure that gutted the runtime).
+            progress.Report(new ProgressReport("client", 0.91, "Verifying client files…"));
+            VerifyClientInstall(staging);
+
+            // Step 4c: atomic swap (old -> backup, staging -> live; restore backup on failure).
+            progress.Report(new ProgressReport("client", 0.94, "Finalizing update…"));
+            SwapIntoPlace(staging, installPath, backup);
 
             // Step 5: register the install.
-            progress.Report(new ProgressReport("client", 0.93, "Registering install…"));
+            progress.Report(new ProgressReport("client", 0.97, "Registering install…"));
             _registerInstall?.Invoke(Code, installPath);
 
             progress.Report(new ProgressReport("client", 1.0, "Installation finished."));
         }
+        catch
+        {
+            // Live install is either untouched (failure before swap) or already restored (failure during
+            // swap). Only the staging dir may remain — drop it. The backup is cleaned up in finally.
+            TryDeleteDir(staging);
+            throw;
+        }
         finally
         {
-            TryDelete(tempZip); // matches fso.js end() -> dl.cleanup()
+            TryDelete(tempZip);   // matches fso.js end() -> dl.cleanup()
+            TryDeleteDir(backup); // on success this is the old install; on a restored failure it's already gone
         }
     }
+
+    /// <summary>
+    /// Throws if <paramref name="dir"/> doesn't look like a complete self-contained OpenSO client — a
+    /// truncated extract is exactly what deleted the bundled .NET runtime and left an unlaunchable install.
+    /// Checks a sane minimum file count plus the presence of the managed entry, the bundled runtime host,
+    /// and the apphost (platform-agnostic so it holds for the win/linux/osx client zips).
+    /// </summary>
+    internal static void VerifyClientInstall(string dir)
+    {
+        int fileCount = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Count();
+        const int minFiles = 80; // a complete self-contained .NET client is ~200 files; far fewer = truncated
+        if (fileCount < minFiles)
+            throw new IOException($"Client extract looks incomplete ({fileCount} files, expected >= {minFiles}); refusing to install a broken client.");
+
+        bool Has(string n) => File.Exists(Path.Combine(dir, n));
+        if (!Has("OpenSO.dll"))
+            throw new IOException("Client extract is missing OpenSO.dll (managed entry) — incomplete download.");
+        if (!(Has("hostfxr.dll") || Has("libhostfxr.so") || Has("libhostfxr.dylib")
+              || Has("coreclr.dll") || Has("libcoreclr.so") || Has("libcoreclr.dylib")))
+            throw new IOException("Client extract is missing the bundled .NET runtime (hostfxr/coreclr) — incomplete download.");
+        if (!(Has("OpenSO.exe") || Has("OpenSO")))
+            throw new IOException("Client extract is missing the OpenSO apphost — incomplete download.");
+    }
+
+    /// <summary>
+    /// Atomically replaces the install at <paramref name="installPath"/> with the verified <paramref name="staging"/>
+    /// dir: moves any existing install aside to <paramref name="backup"/> first, then moves staging into place.
+    /// If the final move fails, the old install is restored from backup. Same-volume Directory.Move is an
+    /// atomic rename, so the live path is never in a half-written state.
+    /// </summary>
+    internal static void SwapIntoPlace(string staging, string installPath, string backup)
+    {
+        bool hadOld = Directory.Exists(installPath);
+        if (hadOld) Directory.Move(installPath, backup);
+        try
+        {
+            Directory.Move(staging, installPath);
+        }
+        catch
+        {
+            // Restore the previous install so a swap failure never leaves the user with nothing.
+            if (hadOld && !Directory.Exists(installPath) && Directory.Exists(backup))
+                Directory.Move(backup, installPath);
+            throw;
+        }
+    }
+
+    private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
 
     /// <summary>
     /// Port of fso.js getZipUrl(): try the OpenSO API release feed first (expects an array with a

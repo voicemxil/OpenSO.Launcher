@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using OpenSO.Launcher.Models;
 using OpenSO.Launcher.Services;
 using OpenSO.Launcher.Services.Extraction;
+using OpenSO.Launcher.Services.Installers;
 
 namespace OpenSO.Launcher.Tests;
 
@@ -30,6 +31,9 @@ internal static class Program
         Test("LauncherConfig points at OpenSO endpoints", TestConfig);
         Test("GameLauncher fails clearly on a missing install", TestLaunchMissing);
         Test("RegistryWriter is safe to call on any OS", TestRegistryWriter);
+        Test("FsoInstaller.VerifyClientInstall rejects a truncated client", TestVerifyRejectsTruncated);
+        Test("FsoInstaller.VerifyClientInstall accepts a complete client", TestVerifyAcceptsComplete);
+        Test("FsoInstaller.SwapIntoPlace replaces install + preserves a backup", TestSwapIntoPlace);
 
         Console.WriteLine();
         Console.WriteLine(_failures == 0 ? "ALL TESTS PASSED" : $"{_failures} TEST(S) FAILED");
@@ -118,11 +122,12 @@ internal static class Program
         var os = OperatingSystem.IsWindows() ? OSPlatformKind.Windows
                : OperatingSystem.IsMacOS() ? OSPlatformKind.MacOS : OSPlatformKind.Linux;
         var deps = Components.DependenciesFor(os)["FSO"];
+        // The self-contained native client only needs the TSO game files. The legacy FreeSO-on-Mono deps
+        // (Mono/SDL/OpenAL/MacExtras) are obsolete and were intentionally dropped from FSO on every platform
+        // (see Components.DependenciesFor) — this test used to assert the old graph and was stale.
         Assert(deps.Contains("TSO"), "FSO depends on TSO");
-        if (os == OSPlatformKind.Windows)
-            Assert(deps.Contains("OpenAL"), "Windows FSO depends on OpenAL");
-        else
-            Assert(deps.Contains("Mono") && deps.Contains("SDL"), "Unix FSO depends on Mono+SDL");
+        Assert(!deps.Contains("OpenAL") && !deps.Contains("Mono") && !deps.Contains("SDL"),
+            "FSO no longer carries the obsolete Mono/SDL/OpenAL deps");
     }
 
     private static void TestConfig()
@@ -152,6 +157,52 @@ internal static class Program
         var result = rw.Write("FSO", NewTmp());
         if (!OperatingSystem.IsWindows())
             Assert(result == false, "registry write is a no-op off Windows");
+    }
+
+    // FsoInstaller hardening: the atomic-update guards that keep a bad update from gutting the install
+    // (the incident where the runtime files got deleted, leaving an unlaunchable "install .NET" client).
+
+    private static void TestVerifyRejectsTruncated()
+    {
+        var dir = Path.Combine(NewTmp(), "client");
+        Directory.CreateDirectory(dir);
+        // A gutted install: apphost + managed dll present, but the bundled runtime host is gone and the
+        // file count is far below a real self-contained client — exactly the corruption we must reject.
+        File.WriteAllText(Path.Combine(dir, "OpenSO.exe"), "x");
+        File.WriteAllText(Path.Combine(dir, "OpenSO.dll"), "x");
+        bool threw = false;
+        try { FsoInstaller.VerifyClientInstall(dir); } catch (IOException) { threw = true; }
+        Assert(threw, "VerifyClientInstall must reject a truncated client (missing runtime / too few files)");
+    }
+
+    private static void TestVerifyAcceptsComplete()
+    {
+        var dir = Path.Combine(NewTmp(), "client");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "OpenSO.exe"), "x");
+        File.WriteAllText(Path.Combine(dir, "OpenSO.dll"), "x");
+        File.WriteAllText(Path.Combine(dir, "hostfxr.dll"), "x");   // runtime host present
+        for (int i = 0; i < 90; i++) File.WriteAllText(Path.Combine(dir, $"pad{i}.dll"), "x"); // over the min count
+        FsoInstaller.VerifyClientInstall(dir); // must NOT throw
+    }
+
+    private static void TestSwapIntoPlace()
+    {
+        var tmp = NewTmp();
+        var install = Path.Combine(tmp, "install");
+        var staging = Path.Combine(tmp, ".install.staging");
+        var backup = Path.Combine(tmp, ".install.backup");
+        Directory.CreateDirectory(install);
+        File.WriteAllText(Path.Combine(install, "old.txt"), "old");
+        Directory.CreateDirectory(staging);
+        File.WriteAllText(Path.Combine(staging, "new.txt"), "new");
+
+        FsoInstaller.SwapIntoPlace(staging, install, backup);
+
+        Assert(File.Exists(Path.Combine(install, "new.txt")), "live install now holds the staged (new) files");
+        Assert(!File.Exists(Path.Combine(install, "old.txt")), "old files were swapped out");
+        Assert(Directory.Exists(backup) && File.Exists(Path.Combine(backup, "old.txt")), "previous install preserved in backup");
+        Assert(!Directory.Exists(staging), "staging dir moved into place");
     }
 
     // ---- harness ----
