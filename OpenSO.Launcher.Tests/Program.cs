@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -33,8 +34,13 @@ internal static class Program
         Test("RegistryWriter is safe to call on any OS", TestRegistryWriter);
         Test("FsoInstaller.VerifyClientInstall rejects a truncated client", TestVerifyRejectsTruncated);
         Test("FsoInstaller.VerifyClientInstall accepts a complete client", TestVerifyAcceptsComplete);
+        Test("FsoInstaller.VerifyClientInstall accepts the macOS code-only OpenSO.app layout", TestVerifyAcceptsMacBundle);
         Test("FsoInstaller.SwapIntoPlace replaces install + preserves a backup", TestSwapIntoPlace);
+        Test("FsoInstaller.CarryOverUserData keeps user files/config, drops code + stray patches", TestCarryOverUserData);
         Test("FsoInstaller.PickFullClientAsset picks the full zip, not the delta/manifest", TestPickFullClientAsset);
+        Test("UpdatePath.FindPath walks the incremental chain like the in-client updater", TestFindPathIncrementalChain);
+        Test("UpdatePath.FindPath falls back to a full-zip start for unknown versions", TestFindPathFullZipFallback);
+        Test("GameUpdateService.BuildDownloads mirrors the in-client PatchFiles layout", TestBuildDownloads);
 
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
@@ -190,6 +196,24 @@ internal static class Program
         FsoInstaller.VerifyClientInstall(dir); // must NOT throw
     }
 
+    private static void TestVerifyAcceptsMacBundle()
+    {
+        // The macOS client is a CODE-ONLY OpenSO.app (apphost + runtime + DLLs inside
+        // Contents/MacOS); the install root only has Content/ + version.txt. This is the layout that
+        // broke Mac installs when verification demanded root-level code files.
+        var dir = Path.Combine(NewTmp(), "client");
+        var macos = Path.Combine(dir, "OpenSO.app", "Contents", "MacOS");
+        Directory.CreateDirectory(macos);
+        File.WriteAllText(Path.Combine(macos, "OpenSO"), "x");
+        File.WriteAllText(Path.Combine(macos, "OpenSO.dll"), "x");
+        File.WriteAllText(Path.Combine(macos, "libhostfxr.dylib"), "x");
+        var content = Path.Combine(dir, "Content");
+        Directory.CreateDirectory(content);
+        File.WriteAllText(Path.Combine(dir, "version.txt"), "v0.1.23");
+        for (int i = 0; i < 90; i++) File.WriteAllText(Path.Combine(content, $"pad{i}.dat"), "x");
+        FsoInstaller.VerifyClientInstall(dir); // must NOT throw
+    }
+
     private static void TestSwapIntoPlace()
     {
         var tmp = NewTmp();
@@ -207,6 +231,97 @@ internal static class Program
         Assert(!File.Exists(Path.Combine(install, "old.txt")), "old files were swapped out");
         Assert(Directory.Exists(backup) && File.Exists(Path.Combine(backup, "old.txt")), "previous install preserved in backup");
         Assert(!Directory.Exists(staging), "staging dir moved into place");
+    }
+
+    private static void TestCarryOverUserData()
+    {
+        var tmp = NewTmp();
+        var old = Path.Combine(tmp, "backup");
+        var neu = Path.Combine(tmp, "install");
+
+        // Old install: a mac flat-layout leftover + user data + patcher state + stray patch file.
+        Directory.CreateDirectory(Path.Combine(old, "Content", "MeshReplace"));
+        Directory.CreateDirectory(Path.Combine(old, "Content", "Patch", "translations"));
+        Directory.CreateDirectory(Path.Combine(old, "PatchFiles"));
+        Directory.CreateDirectory(Path.Combine(old, "OpenSO.app", "Contents", "MacOS"));
+        File.WriteAllText(Path.Combine(old, "Content", "config.ini"), "user config");
+        File.WriteAllText(Path.Combine(old, "Content", "MeshReplace", "sofa.fsom"), "mesh");
+        File.WriteAllText(Path.Combine(old, "Content", "Patch", "stray.ffar"), "stray");
+        File.WriteAllText(Path.Combine(old, "Content", "Patch", "translations", "keep.po"), "tr");
+        File.WriteAllText(Path.Combine(old, "PatchFiles", "path0.zip"), "stale");
+        File.WriteAllText(Path.Combine(old, "OpenSO.dll"), "legacy flat runtime");
+        File.WriteAllText(Path.Combine(old, "OpenSO.app", "Contents", "MacOS", "OpenSO.dll"), "old code");
+        File.WriteAllText(Path.Combine(old, "version.txt"), "v0.1.22");
+
+        // New install: fresh code-only bundle + default config + new version.
+        Directory.CreateDirectory(Path.Combine(neu, "Content"));
+        Directory.CreateDirectory(Path.Combine(neu, "OpenSO.app", "Contents", "MacOS"));
+        File.WriteAllText(Path.Combine(neu, "Content", "config.ini"), "default config");
+        File.WriteAllText(Path.Combine(neu, "OpenSO.app", "Contents", "MacOS", "OpenSO.dll"), "new code");
+        File.WriteAllText(Path.Combine(neu, "version.txt"), "v0.1.23");
+
+        FsoInstaller.CarryOverUserData(old, neu);
+
+        Assert(File.ReadAllText(Path.Combine(neu, "Content", "config.ini")) == "user config",
+            "user's Content/config.ini wins over the shipped default (patcher IgnoreFiles)");
+        Assert(File.Exists(Path.Combine(neu, "Content", "MeshReplace", "sofa.fsom")),
+            "remesh pack survives the update");
+        Assert(File.Exists(Path.Combine(neu, "Content", "Patch", "translations", "keep.po")),
+            "Content/Patch subfolders are kept");
+        Assert(!File.Exists(Path.Combine(neu, "Content", "Patch", "stray.ffar")),
+            "stray top-level Content/Patch files are dropped (clean-patch behavior)");
+        Assert(!File.Exists(Path.Combine(neu, "PatchFiles", "path0.zip")),
+            "stale patcher state is not carried over");
+        Assert(!File.Exists(Path.Combine(neu, "OpenSO.dll")),
+            "legacy flat-layout code is not resurrected next to the code-only bundle");
+        Assert(File.ReadAllText(Path.Combine(neu, "OpenSO.app", "Contents", "MacOS", "OpenSO.dll")) == "new code",
+            "the new bundle stays pristine");
+        Assert(File.ReadAllText(Path.Combine(neu, "version.txt")) == "v0.1.23",
+            "files the new release ships always win");
+    }
+
+    private static List<ApiUpdate> FakeUpdateFeed() => new()
+    {
+        new ApiUpdate { update_id = 35, version_name = "v0.1.23", last_update_id = 34,
+            full_zip = "u23-full", incremental_zip = "u23-inc", manifest_url = "u23-man" },
+        new ApiUpdate { update_id = 34, version_name = "v0.1.22", last_update_id = 33,
+            full_zip = "u22-full", incremental_zip = "u22-inc", manifest_url = "u22-man" },
+        new ApiUpdate { update_id = 33, version_name = "v0.1.21", last_update_id = null,
+            full_zip = "u21-full", incremental_zip = null, manifest_url = null },
+    };
+
+    private static void TestFindPathIncrementalChain()
+    {
+        // Installed v0.1.21, server wants v0.1.23: apply the v0.1.22 then v0.1.23 deltas, no full zip.
+        var path = UpdatePath.FindPath(FakeUpdateFeed(), "v0.1.21", "v0.1.23");
+        Assert(path != null && !path.FullZipStart, "chain found without a full-zip start");
+        Assert(path!.Path.Count == 2 && path.Path[0].version_name == "v0.1.22" && path.Path[1].version_name == "v0.1.23",
+            "deltas are ordered oldest -> newest");
+    }
+
+    private static void TestFindPathFullZipFallback()
+    {
+        // Installed version isn't on the feed: start from the newest full zip on the route.
+        var path = UpdatePath.FindPath(FakeUpdateFeed(), "v0.0.9", "v0.1.23");
+        Assert(path != null && path.FullZipStart, "unknown installed version starts from a full zip");
+        Assert(path!.Path.Count == 1 && path.Path[0].version_name == "v0.1.23", "full zip of the target only");
+        Assert(UpdatePath.FindPath(FakeUpdateFeed(), "v0.1.22", "v9.9.9") == null, "unknown target -> no path");
+    }
+
+    private static void TestBuildDownloads()
+    {
+        // Delta chain: each step is its incremental zip + manifest, named path{i}.zip/.json — the
+        // exact layout FSO.Patcher's Program.UpdatePath() picks up from PatchFiles/.
+        var chain = UpdatePath.FindPath(FakeUpdateFeed(), "v0.1.21", "v0.1.23")!;
+        var files = GameUpdateService.BuildDownloads(chain)!;
+        Assert(files.Count == 4, "two deltas + two manifests");
+        Assert(files[0] == ("u22-inc", "path0.zip") && files[1] == ("u22-man", "path0.json"), "step 0 = v0.1.22 delta");
+        Assert(files[2] == ("u23-inc", "path1.zip") && files[3] == ("u23-man", "path1.json"), "step 1 = v0.1.23 delta");
+
+        // Full-zip start: step 0 downloads the full zip instead.
+        var full = UpdatePath.FindPath(FakeUpdateFeed(), "v0.0.9", "v0.1.23")!;
+        var fullFiles = GameUpdateService.BuildDownloads(full)!;
+        Assert(fullFiles[0] == ("u23-full", "path0.zip"), "full-zip start downloads the full zip first");
     }
 
     private static void TestPickFullClientAsset()

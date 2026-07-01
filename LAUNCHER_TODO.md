@@ -11,7 +11,8 @@ Consolidated list of remaining launcher work. ✅ = done, 🔜 = next, ⏸ = def
 ## Updating
 - ✅ Launcher self-update (release CI feed + swap-and-relaunch).
 - ✅ In-game incremental delta updates (semver `prev`-detection bug fixed + backfill workflow).
-- 🔜 **Game auto-update by server version** — compare the installed game `version.txt` to `/userapi/status` `gameVersion`; prompt/patch on mismatch (reuse the existing install/download path).
+- ✅ Game auto-update by server version — installed `version.txt` vs `/userapi/status` `gameVersion`; UPDATE GAME button on mismatch.
+- ✅ **Launcher updates = in-client updates** — the launcher downloads the incremental delta chain from `/userapi/update` into `PatchFiles/` and runs the game's own patcher (`update.exe`), identical to an update triggered in-client (GameUpdateService). Falls back to the full-zip atomic reinstall when the patcher/chain isn't available (macOS/Linux — no published deltas or patcher — old installs, feed down); that path now preserves user data (saves/remesh/config) like the patcher would, and verification accepts the macOS code-only `OpenSO.app` layout (the v0.1.11-era Mac install/update breaker).
 
 ## Packaging / distribution
 - ✅ Per-RID self-contained zips (win/linux/osx-x64/osx-arm64); Windows Inno installer; macOS `.app` + DMG; install to `%LOCALAPPDATA%`.

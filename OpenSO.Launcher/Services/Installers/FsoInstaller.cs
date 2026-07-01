@@ -77,7 +77,19 @@ public sealed class FsoInstaller : IComponentInstaller
 
             // Step 4c: atomic swap (old -> backup, staging -> live; restore backup on failure).
             progress.Report(new ProgressReport("client", 0.94, "Finalizing update…"));
+            bool hadPrevious = Directory.Exists(installPath);
             SwapIntoPlace(staging, installPath, backup);
+
+            // Step 4d: the in-game patcher (update.exe) EXTRACTS a release over the existing install,
+            // so anything the release doesn't ship survives an update — saves, the remesh pack, the
+            // mesh cache — and the user's Content/config.ini is never overwritten. The swap above
+            // replaced the whole folder, so restore those from the old install (now the backup) to
+            // land on the same end state the patcher would have produced.
+            if (hadPrevious)
+            {
+                progress.Report(new ProgressReport("client", 0.95, "Restoring user data…"));
+                CarryOverUserData(backup, installPath);
+            }
 
             // Step 5: register the install.
             progress.Report(new ProgressReport("client", 0.97, "Registering install…"));
@@ -103,7 +115,9 @@ public sealed class FsoInstaller : IComponentInstaller
     /// Throws if <paramref name="dir"/> doesn't look like a complete self-contained OpenSO client — a
     /// truncated extract is exactly what deleted the bundled .NET runtime and left an unlaunchable install.
     /// Checks a sane minimum file count plus the presence of the managed entry, the bundled runtime host,
-    /// and the apphost (platform-agnostic so it holds for the win/linux/osx client zips).
+    /// and the apphost. Two valid layouts: the flat win/linux one (code at the install root), and the
+    /// macOS CODE-ONLY bundle (apphost + runtime + managed DLLs inside OpenSO.app/Contents/MacOS, with
+    /// only Content/ and version.txt at the root — see the client's CreateMacAppBundle target).
     /// </summary>
     internal static void VerifyClientInstall(string dir)
     {
@@ -112,7 +126,8 @@ public sealed class FsoInstaller : IComponentInstaller
         if (fileCount < minFiles)
             throw new IOException($"Client extract looks incomplete ({fileCount} files, expected >= {minFiles}); refusing to install a broken client.");
 
-        bool Has(string n) => File.Exists(Path.Combine(dir, n));
+        var macCode = Path.Combine("OpenSO.app", "Contents", "MacOS");
+        bool Has(string n) => File.Exists(Path.Combine(dir, n)) || File.Exists(Path.Combine(dir, macCode, n));
         if (!Has("OpenSO.dll"))
             throw new IOException("Client extract is missing OpenSO.dll (managed entry) — incomplete download.");
         if (!(Has("hostfxr.dll") || Has("libhostfxr.so") || Has("libhostfxr.dylib")
@@ -143,6 +158,56 @@ public sealed class FsoInstaller : IComponentInstaller
                 Directory.Move(backup, installPath);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Restores user-owned files from the pre-update install (<paramref name="oldInstall"/>) into the
+    /// freshly-swapped <paramref name="newInstall"/>, mirroring the in-game patcher's semantics: files
+    /// the new release doesn't ship are kept (saves, remesh .fsom meshes, mesh cache), the user's
+    /// Content/config.ini and NLog.config are kept over the shipped defaults (the patcher's
+    /// IgnoreFiles), and stray files directly in Content/Patch are dropped like a clean full-zip patch
+    /// does (subfolders, e.g. translations, are kept). Code and patcher state are never carried over.
+    /// Best-effort per file — a single unrestorable file must not fail the install.
+    /// </summary>
+    internal static void CarryOverUserData(string oldInstall, string newInstall)
+    {
+        if (!Directory.Exists(oldInstall)) return;
+        // With the code-only macOS bundle, anything code-like at the OLD root is a legacy flat-layout
+        // leftover (bare runtime next to the .app) — resurrecting it would just shadow the bundle.
+        bool newIsMacBundle = Directory.Exists(Path.Combine(newInstall, "OpenSO.app"));
+
+        foreach (var src in Directory.EnumerateFiles(oldInstall, "*", SearchOption.AllDirectories))
+        {
+            string rel = Path.GetRelativePath(oldInstall, src).Replace('\\', '/');
+            string top = rel.Split('/')[0];
+
+            if (top == "OpenSO.app") continue;                        // code-only bundle stays pristine
+            if (top is "PatchFiles" or "updateBackup") continue;      // stale patcher state
+            if (top.StartsWith('.')) continue;                        // markers / staging leftovers (.openso-install is rewritten below)
+            if (newIsMacBundle && !rel.Contains('/') && IsRootCodeFile(rel)) continue;
+            if (rel.StartsWith("Content/Patch/", StringComparison.OrdinalIgnoreCase) &&
+                rel.Count(c => c == '/') == 2) continue;              // clean-patch behavior: drop stray top-level patch files
+
+            try
+            {
+                // The patcher never overwrites these (IgnoreFiles) — keep the USER's copy. Everything
+                // else only fills gaps: files the new release ships always win.
+                bool keepUserCopy = rel.Equals("Content/config.ini", StringComparison.OrdinalIgnoreCase)
+                                 || rel.Equals("NLog.config", StringComparison.OrdinalIgnoreCase);
+                var dst = Path.Combine(newInstall, rel);
+                if (!keepUserCopy && File.Exists(dst)) continue;
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                File.Copy(src, dst, overwrite: true);
+            }
+            catch { /* best effort */ }
+        }
+    }
+
+    private static bool IsRootCodeFile(string name)
+    {
+        if (name is "OpenSO" or "createdump") return true; // extensionless unix apphost/diagnostics
+        var ext = Path.GetExtension(name).ToLowerInvariant();
+        return ext is ".dll" or ".dylib" or ".so" or ".exe" or ".pdb" or ".json" or ".xml";
     }
 
     private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }

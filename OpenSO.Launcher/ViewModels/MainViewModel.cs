@@ -281,14 +281,7 @@ public partial class MainViewModel : ObservableObject
     /// the block and retries once.</summary>
     private async Task PlayAsync()
     {
-        var opts = new GameLauncher.Options
-        {
-            GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
-            Enable3D = ThreeDMode == "Enabled",
-            RefreshRate = RefreshRate,
-            LanguageCode = 0,
-            Windowed = true,
-        };
+        var opts = BuildLaunchOptions();
 
         for (int attempt = 0; attempt < 2; attempt++)
         {
@@ -336,8 +329,20 @@ public partial class MainViewModel : ObservableObject
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
-    /// <summary>Updates the installed client to the server's required version by re-running the client
-    /// install (downloads the current release and extracts over the existing install).</summary>
+    private GameLauncher.Options BuildLaunchOptions() => new()
+    {
+        GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
+        Enable3D = ThreeDMode == "Enabled",
+        RefreshRate = RefreshRate,
+        LanguageCode = 0,
+        Windowed = true,
+    };
+
+    /// <summary>Updates the installed client to the server's required version — the same way the game
+    /// itself does it: download the incremental delta chain into PatchFiles/ and run the bundled
+    /// patcher (update.exe), which applies it and relaunches the game. Falls back to a full reinstall
+    /// (download + atomic swap) when that path isn't available: macOS/Linux builds don't ship the
+    /// patcher, the update feed may be down, or the install predates version stamping.</summary>
     private async Task UpdateGameAsync()
     {
         if (Busy) return;
@@ -350,9 +355,20 @@ public partial class MainViewModel : ObservableObject
                 Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
-            await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
-                onUnsupported: code => Notify($"{code} not available."));
-            Notify("Game updated. Press PLAY to launch.");
+
+            var patch = new GameUpdateService(_config);
+            var patched = await patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
+                GameLauncher.BuildArgs(BuildLaunchOptions()), reporter);
+            if (patched)
+            {
+                Notify("Update applied — the patcher restarts OpenSO when it's done.");
+            }
+            else
+            {
+                await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} not available."));
+                Notify("Game updated. Press PLAY to launch.");
+            }
         }
         catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
