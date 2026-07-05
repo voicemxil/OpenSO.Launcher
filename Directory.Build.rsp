@@ -1,0 +1,9 @@
+# MSBuild auto-loads this response file for every build under this repo (dotnet build/run/test).
+#
+# /nodeReuse:false — don't leave persistent MSBuild worker nodes behind. By default the dotnet SDK
+# keeps a pool of "dotnet.exe ... MSBuild.dll /nodeReuse:true" worker processes alive for ~15
+# minutes after a build; in Task Manager they show up as multiple background ".NET Host" processes
+# that appear whenever the launcher is built or started via `dotnet run` and outlive the launcher
+# window. They are build workers, not launcher children — but for a small app like this the rebuild
+# time they save is negligible, so trade it for a clean process list.
+/nodeReuse:false
