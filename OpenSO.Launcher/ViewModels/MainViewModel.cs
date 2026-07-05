@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -26,6 +27,16 @@ public partial class MainViewModel : ObservableObject
     private readonly StatusService _status;
     private readonly LauncherSettings _settings;
     private string? _fsoPath;
+
+    /// <summary>Cancelled when the app shuts down — ends the clock/status polling loops so no
+    /// background work outlives the window (see App.OnFrameworkInitializationCompleted).</summary>
+    private readonly CancellationTokenSource _shutdownCts = new();
+
+    /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
+    public void Shutdown()
+    {
+        try { _shutdownCts.Cancel(); } catch (ObjectDisposedException) { }
+    }
 
     // ---- Navigation -------------------------------------------------------------------------------
     [ObservableProperty] private string _section = "HOME";
@@ -134,22 +145,30 @@ public partial class MainViewModel : ObservableObject
 
     private async void StartClock()
     {
-        while (true)
+        try
         {
-            Clock = DateTime.Now.ToString("h:mm tt");
-            if (StatsAvailable) // in-game time-of-day, anchored to the server's UTC and ticked locally
-                ServerTimeText = GameClock.Format(_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc));
-            await Task.Delay(1_000);
+            while (!_shutdownCts.IsCancellationRequested)
+            {
+                Clock = DateTime.Now.ToString("h:mm tt");
+                if (StatsAvailable) // in-game time-of-day, anchored to the server's UTC and ticked locally
+                    ServerTimeText = GameClock.Format(_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc));
+                await Task.Delay(1_000, _shutdownCts.Token);
+            }
         }
+        catch (OperationCanceledException) { /* app is shutting down */ }
     }
 
     private async void StartStatusPolling()
     {
-        while (true)
+        try
         {
-            await LoadStatusAsync();
-            await Task.Delay(30_000); // endpoint is cached ~10s server-side; 30s is plenty
+            while (!_shutdownCts.IsCancellationRequested)
+            {
+                await LoadStatusAsync();
+                await Task.Delay(30_000, _shutdownCts.Token); // endpoint is cached ~10s server-side; 30s is plenty
+            }
         }
+        catch (OperationCanceledException) { /* app is shutting down */ }
     }
 
     private async Task LoadStatusAsync()
@@ -295,8 +314,12 @@ public partial class MainViewModel : ObservableObject
                 return;
             }
 
-            // Don't claim success until we know it didn't die immediately.
-            var exitCode = await GameLauncher.WaitForEarlyExitAsync(proc, TimeSpan.FromSeconds(3));
+            // Don't claim success until we know it didn't die immediately. Dispose the Process
+            // component afterwards — it only releases our handle to the game, which keeps running
+            // detached; holding it open would leak a handle for the launcher's whole lifetime.
+            int? exitCode;
+            using (proc)
+                exitCode = await GameLauncher.WaitForEarlyExitAsync(proc, TimeSpan.FromSeconds(3));
             if (exitCode is null) { Notify("OpenSO is running."); return; }
 
             // A signal-kill (exit > 128) on macOS is almost always Gatekeeper/quarantine — offer to fix
@@ -407,7 +430,13 @@ public partial class MainViewModel : ObservableObject
             var reporter = new Progress<ProgressReport>(r => { Progress = r.Fraction; StatusLine = $"{r.Stage}: {r.Detail}"; });
             await _selfUpdate.ApplyLauncherUpdateAsync(reporter);
             StatusLine = "Restarting to finish the update…";
-            Environment.Exit(0);
+            // Shut down through the Avalonia lifetime so App cancels background work and Main's
+            // process-exit backstop runs; the staged swap script waits for this PID to disappear.
+            if (Avalonia.Application.Current?.ApplicationLifetime
+                is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+                desktop.Shutdown();
+            else
+                Environment.Exit(0);
         }
         catch (Exception ex) { Notify("Launcher update failed: " + ex.Message); Busy = false; }
     }
