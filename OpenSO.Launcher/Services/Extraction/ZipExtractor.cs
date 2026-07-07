@@ -26,6 +26,12 @@ public static class ZipExtractor
         using var archive = ZipFile.OpenRead(from);
         int total = archive.Entries.Count;
         int done = 0;
+        // Progress is byte-based, not file-count: a single large file (the ~100 MB bundled runtime)
+        // otherwise jumps 1%->100% while small files fly by. Track uncompressed bytes written vs the
+        // archive total, reporting within big files too so the bar moves smoothly.
+        long totalBytes = 0;
+        foreach (var e in archive.Entries) totalBytes += e.Length;
+        long writtenBytes = 0;
 
         // Zip-slip guard root: trailing separator so a SIBLING with the same prefix ("C:\inst-evil"
         // vs "C:\inst") can't pass, and case-insensitive comparison on Windows (the filesystem is —
@@ -61,7 +67,20 @@ public static class ZipExtractor
             await using (var inStream = entry.Open())
             await using (var outStream = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                await inStream.CopyToAsync(outStream, 81920, ct);
+                var buffer = new byte[262144]; // 256 KB — fewer syscalls than the old 80 KB on fast disks
+                int n;
+                long sinceReport = 0;
+                while ((n = await inStream.ReadAsync(buffer, ct)) > 0)
+                {
+                    await outStream.WriteAsync(buffer.AsMemory(0, n), ct);
+                    writtenBytes += n;
+                    sinceReport += n;
+                    if (sinceReport >= 4 * 1024 * 1024) // report intra-file every ~4 MB
+                    {
+                        sinceReport = 0;
+                        progress?.Report(new ProgressReport("extract", Fraction(writtenBytes, totalBytes, done, total), entry.Name));
+                    }
+                }
             }
 
             if (preservePermissions && !OperatingSystem.IsWindows())
@@ -71,12 +90,16 @@ public static class ZipExtractor
                 if (mode != 0) TrySetUnixMode(destination, mode);
             }
 
-            progress?.Report(new ProgressReport("extract",
-                total > 0 ? (double)done / total : 1.0, entry.Name));
+            progress?.Report(new ProgressReport("extract", Fraction(writtenBytes, totalBytes, done, total), entry.Name));
         }
 
         progress?.Report(new ProgressReport("extract", 1.0, "done"));
     }
+
+    // Prefer the byte fraction; fall back to the file-count fraction for a zip of empty files (totalBytes 0).
+    private static double Fraction(long writtenBytes, long totalBytes, int done, int total) =>
+        totalBytes > 0 ? Math.Clamp((double)writtenBytes / totalBytes, 0, 1)
+                       : (total > 0 ? (double)done / total : 1.0);
 
     [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
     private static void TrySetUnixMode(string path, int mode)
