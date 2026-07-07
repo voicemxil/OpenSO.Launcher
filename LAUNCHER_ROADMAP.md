@@ -133,13 +133,15 @@ These are exploitable or cause silent data loss / dead UI.
 
 ## P5 — Build / CI
 
-- [ ] **Run the unit tests in CI** — `release.yml` builds and publishes but does not run
-  `OpenSO.Launcher.Tests`. A regression (e.g. `SwapIntoPlace`) can ship. Add a test step before publish. **S**.
+- [x] **Run the unit tests in CI** — DONE 2026-07-07: added [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+  — builds + runs the headless logic tests on push/PR across ubuntu/windows/macos (the platform matrix
+  also covers the review's "cross-platform test run" item, since the registry probe, zip-slip
+  case-sensitivity, and POSIX file-mode paths are OS-specific). `release.yml` left untouched.
 - [ ] **Enable ReadyToRun** — `<PublishReadyToRun>true</PublishReadyToRun>` for faster startup. **S**.
 - [ ] **Evaluate trimming** — `<PublishTrimmed>` could roughly halve the self-contained size (~80–120 MB →
   ~40–60 MB); needs Avalonia reflection roots + per-platform testing. **M**.
 - [ ] **Track publish size in CI** — report + flag >10% growth per release. **S**.
-- [ ] **Cross-platform test run** — run the logic tests on each RID (esp. macOS code-only bundle). **M**.
+- [x] **Cross-platform test run** — DONE 2026-07-07 as part of the CI workflow above (ubuntu/windows/macos matrix).
 
 ## Missing test coverage (add alongside the fixes above)
 
