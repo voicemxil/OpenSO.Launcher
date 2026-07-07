@@ -40,6 +40,26 @@ These are exploitable or cause silent data loss / dead UI.
   `MonoInstaller`. The Windows `cmd.exe /c` elevation path is currently unused (elevation is only
   invoked on macOS/Linux) — harden it with proper cmd quoting before any Windows caller is added.
 
+## Concurrency with a running game (added 2026-07-07)
+
+Patching/installing over a *running* client locks the exe + loaded DLLs (Windows) or leaves a
+half-swapped tree — a direct route to a corrupt install. Two sides:
+
+- [x] **Launcher: refuse install/update/remesh while the game runs** — DONE 2026-07-07.
+  [`GameProcessGuard.IsGameRunning(installDir)`](OpenSO.Launcher/Services/GameProcessGuard.cs) matches an
+  `OpenSO` process whose image path is inside the install dir (counts unreadable processes as a match —
+  refusing is safer than corrupting). Gates `MainViewModel` install/update/remesh with a clear "close
+  OpenSO first" message, plus defense-in-depth throws in `GameUpdateService.TryPatchUpdateAsync` and
+  `FsoInstaller` (before the swap). Smoke-tested.
+
+- [x] **Patcher (`FSO.Patcher`, OpenSO repo): wait for the game to exit before patching** — DONE 2026-07-07.
+  The patcher only inferred locks from failed writes and showed a misleading "run as administrator"
+  message; on Windows a running `.exe` can even be renamed, so its `AttemptRename` sentinel passed while
+  the game was live and then corrupted the install overwriting locked DLLs. It also called
+  `AttemptRename(8)` against a max of 5 → the retry loop never ran. Fixed in the OpenSO repo (branch
+  `harden/patch-while-running`): an explicit "wait for OpenSO to close" gate before the first patch
+  (Forms + CLI), the retry bug fixed, and a clearer message.
+
 ## P1 — Fix before public beta
 
 - [x] **Await initial state before it can be misread** — DONE 2026-07-07: startup is now

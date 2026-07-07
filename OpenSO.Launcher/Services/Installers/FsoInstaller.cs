@@ -44,6 +44,11 @@ public sealed class FsoInstaller : IComponentInstaller
         EnsureFreeSpace(installPath);
         EnsureFreeSpace(Path.GetTempPath());
 
+        // A reinstall/update swaps the whole install dir aside; if the game is running from it the swap
+        // fails on Windows (locked dir) and leaves a confusing error. Refuse up front with a clear one.
+        if (Directory.Exists(installPath) && GameProcessGuard.IsGameRunning(installPath))
+            throw new InvalidOperationException("OpenSO is still running — close the game before reinstalling/updating it.");
+
         // Step 1: resolve the zip URL.
         progress.Report(new ProgressReport("client", 0, "Locating the latest client…"));
         var (zipUrl, zipSha256) = await ResolveClientZipUrlAsync(ct);

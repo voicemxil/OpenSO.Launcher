@@ -33,6 +33,7 @@ internal static class Program
         Test("ElevationService.ShQuote defuses shell metacharacters", TestShQuote);
         Test("RemoteUrl.RequireHttps allows https and rejects http/other schemes", TestRemoteUrl);
         Test("TempFiles.NewDir returns a fresh, unique, existing directory", TestTempFiles);
+        Test("GameProcessGuard reports no running game for an unrelated dir", TestGameProcessGuard);
         await Test("InstallStateService probes without throwing", TestInstallState);
         Test("Dependency graph resolves FSO deps for the current OS", TestDependencyGraph);
         Test("LauncherConfig points at OpenSO endpoints", TestConfig);
@@ -205,6 +206,14 @@ internal static class Program
             "embedded single quote is escaped, injection stays quoted");
         Assert(ElevationService.ShQuote("$(reboot) && `id`") == "'$(reboot) && `id`'",
             "command substitution and && are inert inside single quotes");
+    }
+
+    private static void TestGameProcessGuard()
+    {
+        // No OpenSO client is installed at this throwaway path, so nothing should match. (Verifies the
+        // path-scoped check returns false rather than throwing when it enumerates live processes.)
+        var dir = Path.Combine(NewTmp(), "OpenSO-not-here");
+        Assert(!GameProcessGuard.IsGameRunning(dir), "an unrelated install dir has no running game");
     }
 
     private static void TestTempFiles()

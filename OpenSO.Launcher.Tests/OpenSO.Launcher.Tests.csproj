@@ -25,6 +25,7 @@
     <Compile Include="..\OpenSO.Launcher\Services\Extraction\CabExtractor.cs" Link="src\CabExtractor.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\ElevationService.cs" Link="src\ElevationService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\GameLauncher.cs" Link="src\GameLauncher.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\GameProcessGuard.cs" Link="src\GameProcessGuard.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\GameUpdateService.cs" Link="src\GameUpdateService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />

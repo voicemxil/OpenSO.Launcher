@@ -400,10 +400,22 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>Refuses an install/update/patch while the OpenSO client is open (it would overwrite
+    /// locked game files and corrupt the install). Returns true — and notifies the user — if blocked.</summary>
+    private bool BlockedByRunningGame()
+    {
+        if (ClientInstalled && GameProcessGuard.IsGameRunning(_fsoPath))
+        {
+            Notify("OpenSO is running. Close the game first, then try again.");
+            return true;
+        }
+        return false;
+    }
+
     [RelayCommand]
     private async Task InstallAsync()
     {
-        if (Busy) return;
+        if (Busy || BlockedByRunningGame()) return;
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify("Preparing installation…");
         try
@@ -445,7 +457,7 @@ public partial class MainViewModel : ObservableObject
     /// patcher, the update feed may be down, or the install predates version stamping.</summary>
     private async Task UpdateGameAsync()
     {
-        if (Busy) return;
+        if (Busy || BlockedByRunningGame()) return;
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify($"Updating the game to match the server ({ServerGameVersion})…");
         try
@@ -486,7 +498,7 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task InstallRemeshAsync()
     {
-        if (Busy) return;
+        if (Busy || BlockedByRunningGame()) return;
         if (!ClientInstalled) { Notify("Install the OpenSO client first, then add the 3D mesh pack."); Section = "INSTALLER"; return; }
 
         Busy = true; Progress = 0; Section = "DOWNLOADS";

@@ -44,6 +44,10 @@ public sealed class GameUpdateService
         if (!OperatingSystem.IsWindows()) return false;
         var patcherExe = Path.Combine(installDir, "update.exe");
         if (!File.Exists(patcherExe)) return false;
+        // Defense in depth: never stage/run the patcher against a live game (the UI guards this too).
+        // The patcher would overwrite locked exe/DLLs and leave a half-applied, corrupt install.
+        if (GameProcessGuard.IsGameRunning(installDir))
+            throw new InvalidOperationException("OpenSO is still running — close the game before updating.");
         // Without a known installed version there's no chain start — an old pre-version.txt install.
         if (string.IsNullOrWhiteSpace(installedVersion)) return false;
 
