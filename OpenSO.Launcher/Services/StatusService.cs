@@ -16,14 +16,18 @@ namespace OpenSO.Launcher.Services;
 public sealed class StatusService
 {
     private readonly LauncherConfig _config;
-    private readonly HttpClient _http;
+    // Static like DownloadService's client: per-instance HttpClients are never disposed and leak
+    // socket handles across launcher restarts/re-instantiations.
+    private static readonly HttpClient Http = CreateClient();
     private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
 
-    public StatusService(LauncherConfig config)
+    public StatusService(LauncherConfig config) => _config = config;
+
+    private static HttpClient CreateClient()
     {
-        _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        return c;
     }
 
     private string Api => _config.ApiBaseUrl.TrimEnd('/');
@@ -32,7 +36,7 @@ public sealed class StatusService
     {
         try
         {
-            var json = await _http.GetStringAsync($"{Api}/userapi/status", ct);
+            var json = await Http.GetStringAsync($"{Api}/userapi/status", ct);
             return JsonSerializer.Deserialize<ServerStatus>(json, Opts);
         }
         catch { return null; } // offline / endpoint unavailable -> caller shows placeholders

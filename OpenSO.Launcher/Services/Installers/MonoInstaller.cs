@@ -46,8 +46,7 @@ public sealed class MonoInstaller : IComponentInstaller
             await new DownloadService(url, pkg).RunAsync(Scale(progress, "mono", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("mono", 0.9, "Installing Mono (you may be asked for your password)…"));
-            var escaped = pkg.Replace(" ", "\\ ");
-            var res = await _elevation.RunAsync($"installer -pkg {escaped} -target /",
+            var res = await _elevation.RunAsync($"installer -pkg {ElevationService.ShQuote(pkg)} -target /",
                 "OpenSO needs to install the Mono runtime", ct);
             try { File.Delete(pkg); } catch { }
 

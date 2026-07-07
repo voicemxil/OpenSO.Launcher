@@ -27,22 +27,33 @@ public static class ZipExtractor
         int total = archive.Entries.Count;
         int done = 0;
 
+        // Zip-slip guard root: trailing separator so a SIBLING with the same prefix ("C:\inst-evil"
+        // vs "C:\inst") can't pass, and case-insensitive comparison on Windows (the filesystem is —
+        // an Ordinal check would wave through a case-varied traversal).
+        var root = Path.GetFullPath(to);
+        if (!root.EndsWith(Path.DirectorySeparatorChar)) root += Path.DirectorySeparatorChar;
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
         foreach (var entry in archive.Entries)
         {
             ct.ThrowIfCancellationRequested();
             done++;
 
-            // Directory entry (name ends with '/') — just ensure it exists.
+            // Directory entry (name ends with '/') — just ensure it exists (guarded like files:
+            // a "../" directory entry must not create folders outside the destination).
             if (entry.FullName.EndsWith("/") || string.IsNullOrEmpty(entry.Name))
             {
-                Directory.CreateDirectory(Path.Combine(to, entry.FullName));
+                var dirDest = Path.GetFullPath(Path.Combine(to, entry.FullName));
+                if (!dirDest.StartsWith(root, cmp) && dirDest + Path.DirectorySeparatorChar != root)
+                    throw new IOException($"Blocked unsafe zip entry path: {entry.FullName}");
+                Directory.CreateDirectory(dirDest);
                 continue;
             }
 
             var destination = Path.GetFullPath(Path.Combine(to, entry.FullName));
 
             // Zip-slip guard: never write outside the destination directory.
-            if (!destination.StartsWith(Path.GetFullPath(to), StringComparison.Ordinal))
+            if (!destination.StartsWith(root, cmp))
                 throw new IOException($"Blocked unsafe zip entry path: {entry.FullName}");
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);

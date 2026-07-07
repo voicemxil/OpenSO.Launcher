@@ -82,7 +82,9 @@ public sealed class GameUpdateService
         {
             // A half-staged PatchFiles dir would be picked up (and applied!) by the next patcher
             // run, in-client or otherwise — remove it, then let the caller fall back / report.
-            TryDeleteDir(patchDir);
+            // Retried: a transiently-locked file here (AV scan, lagging handle) would otherwise
+            // leave the stale dir behind for the next patcher run to corrupt the install with.
+            TryDeleteDirWithRetry(patchDir);
             throw;
         }
 
@@ -139,6 +141,32 @@ public sealed class GameUpdateService
     }
 
     private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
+
+    private static void TryDeleteDirWithRetry(string path)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try { if (!Directory.Exists(path)) return; Directory.Delete(path, true); return; }
+            catch { Thread.Sleep(500 * (attempt + 1)); }
+        }
+        TryDeleteDir(path); // last best-effort attempt
+    }
+
+    /// <summary>
+    /// Startup sweep: removes a leftover &lt;install&gt;/PatchFiles dir. One only exists when a previous
+    /// patch run failed AND its cleanup couldn't delete it (locked files) — the patcher would happily
+    /// apply that stale/partial chain on its next run and corrupt the install. Safe to call any time
+    /// the patcher isn't running; TryPatchUpdateAsync re-stages a fresh dir for every update anyway.
+    /// </summary>
+    public static void SweepStalePatchFiles(string installDir)
+    {
+        try
+        {
+            var patchDir = Path.Combine(installDir, "PatchFiles");
+            if (Directory.Exists(patchDir)) TryDeleteDirWithRetry(patchDir);
+        }
+        catch { /* best effort */ }
+    }
 
     /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
     private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,

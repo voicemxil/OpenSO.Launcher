@@ -22,6 +22,14 @@ public sealed class ElevationService
         public bool Success => ExitCode == 0;
     }
 
+    /// <summary>
+    /// Quote a string for safe interpolation into a POSIX shell command (sh -c / `do shell script`):
+    /// single-quote it and escape embedded single quotes ('foo' -> 'foo'\''bar'). Callers building
+    /// elevated commands MUST pass every runtime value (file paths especially) through this — naive
+    /// escaping lets a crafted path inject `;`/`&&`/`$( )` into a root shell.
+    /// </summary>
+    public static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
+
     /// <summary>Run <paramref name="command"/> elevated. <paramref name="prompt"/> is shown in the
     /// auth dialog where the OS supports it (macOS).</summary>
     public async Task<ElevationResult> RunAsync(string command, string prompt = "OpenSO Launcher needs permission",

@@ -32,6 +32,12 @@ public partial class MainViewModel : ObservableObject
     /// background work outlives the window (see App.OnFrameworkInitializationCompleted).</summary>
     private readonly CancellationTokenSource _shutdownCts = new();
 
+    /// <summary>Serializes installs/updates against the install-state probe: a RefreshAsync must never
+    /// read half-written markers mid-install, and two component installs can never mutate the install
+    /// tree concurrently. Scoped around the orchestrator call itself (NOT the whole command) so the
+    /// RefreshAsync in each command's finally doesn't deadlock on its own gate.</summary>
+    private readonly SemaphoreSlim _installGate = new(1, 1);
+
     /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
     public void Shutdown()
     {
@@ -122,9 +128,19 @@ public partial class MainViewModel : ObservableObject
         ClosingBehavior = _settings.ClosingBehavior;
 
         StartClock();
-        _ = RefreshAsync();
+        _ = InitializeAsync();
         _ = LoadNewsAsync();
         _ = CheckLauncherUpdateAsync();
+    }
+
+    /// <summary>Startup sequence: establish the install state FIRST, then start status polling — so the
+    /// poll's RecomputeGameUpdate never races the initial refresh over PlayButtonText/update state.
+    /// RefreshAsync never throws, so this can be safely fire-and-forgotten from the ctor.</summary>
+    private async Task InitializeAsync()
+    {
+        await RefreshAsync();
+        if (ClientInstalled && _fsoPath != null)
+            GameUpdateService.SweepStalePatchFiles(_fsoPath); // a failed patch must not be re-applied later
         StartStatusPolling();
     }
 
@@ -143,32 +159,35 @@ public partial class MainViewModel : ObservableObject
     partial void OnLiveNotificationsChanged(string value) { _settings.LiveNotifications = value == "Enabled"; _settings.Save(); }
     partial void OnClosingBehaviorChanged(string value) { _settings.ClosingBehavior = value; _settings.Save(); }
 
+    // Both loops are async void (fire-and-forget from the ctor), so ANY escaped exception would kill
+    // the loop silently — a frozen clock or a status pill stuck on "Connecting…" for the rest of the
+    // session. Each iteration therefore swallows per-tick failures and keeps looping; only shutdown
+    // cancellation exits.
     private async void StartClock()
     {
-        try
+        while (!_shutdownCts.IsCancellationRequested)
         {
-            while (!_shutdownCts.IsCancellationRequested)
+            try
             {
                 Clock = DateTime.Now.ToString("h:mm tt");
                 if (StatsAvailable) // in-game time-of-day, anchored to the server's UTC and ticked locally
                     ServerTimeText = GameClock.Format(_serverTimeUtc + (DateTime.UtcNow - _serverTimeSyncedAtUtc));
-                await Task.Delay(1_000, _shutdownCts.Token);
             }
+            catch { /* keep ticking */ }
+            try { await Task.Delay(1_000, _shutdownCts.Token); }
+            catch (OperationCanceledException) { return; /* app is shutting down */ }
         }
-        catch (OperationCanceledException) { /* app is shutting down */ }
     }
 
     private async void StartStatusPolling()
     {
-        try
+        while (!_shutdownCts.IsCancellationRequested)
         {
-            while (!_shutdownCts.IsCancellationRequested)
-            {
-                await LoadStatusAsync();
-                await Task.Delay(30_000, _shutdownCts.Token); // endpoint is cached ~10s server-side; 30s is plenty
-            }
+            try { await LoadStatusAsync(); }
+            catch { /* transient network/parse failure — keep the last known state and poll again */ }
+            try { await Task.Delay(30_000, _shutdownCts.Token); } // endpoint is cached ~10s server-side; 30s is plenty
+            catch (OperationCanceledException) { return; /* app is shutting down */ }
         }
-        catch (OperationCanceledException) { /* app is shutting down */ }
     }
 
     private async Task LoadStatusAsync()
@@ -202,24 +221,41 @@ public partial class MainViewModel : ObservableObject
         RecomputeGameUpdate(); // server version just refreshed — re-check it against the installed client
     }
 
+    /// <summary>Re-probes the install state and updates the UI. Never throws (fire-and-forgotten from
+    /// the ctor and awaited in install finally blocks — an escaped exception would either vanish
+    /// silently or mask the install's own error). The probe is serialized behind _installGate so it
+    /// can't read half-written install markers while an install/update is mutating them.</summary>
     public async Task RefreshAsync()
     {
-        StatusLine = "Checking your installation…";
-        var installed = await _installState.GetInstalledAsync();
-        var fso = installed.FirstOrDefault(s => s.Code == "FSO");
-        var tso = installed.FirstOrDefault(s => s.Code == "TSO");
-        var rms = installed.FirstOrDefault(s => s.Code == "RMS");
+        try
+        {
+            StatusLine = "Checking your installation…";
+            System.Collections.Generic.IReadOnlyList<InstallStatus> installed;
+            await _installGate.WaitAsync();
+            try { installed = await _installState.GetInstalledAsync(); }
+            finally { _installGate.Release(); }
+            var fso = installed.FirstOrDefault(s => s.Code == "FSO");
+            var tso = installed.FirstOrDefault(s => s.Code == "TSO");
+            var rms = installed.FirstOrDefault(s => s.Code == "RMS");
 
-        ClientInstalled = fso?.IsInstalled == true;
-        AssetsInstalled = tso?.IsInstalled == true;
-        RemeshInstalled = rms?.IsInstalled == true;
-        _fsoPath = ClientInstalled ? fso!.Path : null;
-        InstalledGameVersion = ClientInstalled ? ReadGameVersion(_fsoPath) : null;
-        ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
-        AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
-        RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
-        StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
-        RecomputeGameUpdate();
+            ClientInstalled = fso?.IsInstalled == true;
+            AssetsInstalled = tso?.IsInstalled == true;
+            RemeshInstalled = rms?.IsInstalled == true;
+            _fsoPath = ClientInstalled ? fso!.Path : null;
+            InstalledGameVersion = ClientInstalled ? ReadGameVersion(_fsoPath) : null;
+            ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
+            AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
+            RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
+            StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
+            RecomputeGameUpdate();
+        }
+        catch (Exception ex)
+        {
+            // Don't guess at an install state we couldn't read — say so instead of showing
+            // "Ready to install" over a real install (which invites a conflicting reinstall).
+            ClientState = "Unknown — couldn't check the install";
+            StatusLine = "Couldn't check your installation: " + ex.Message;
+        }
     }
 
     /// <summary>True when the installed client's version differs from the version the server requires
@@ -320,7 +356,10 @@ public partial class MainViewModel : ObservableObject
             int? exitCode;
             using (proc)
                 exitCode = await GameLauncher.WaitForEarlyExitAsync(proc, TimeSpan.FromSeconds(3));
-            if (exitCode is null) { Notify("OpenSO is running."); return; }
+            // null = still running after the window. 0 = the parent exited CLEANLY within it — that's
+            // a hand-off (relaunch/fork to a detached child), not a crash; a client that fails shows
+            // an error and exits non-zero. Only a non-zero early exit is treated as a failed launch.
+            if (exitCode is null or 0) { Notify("OpenSO is running."); return; }
 
             // A signal-kill (exit > 128) on macOS is almost always Gatekeeper/quarantine — offer to fix
             // + retry. Otherwise the game most likely showed its own error (e.g. missing game files).
@@ -344,8 +383,13 @@ public partial class MainViewModel : ObservableObject
                 Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
-            await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
-                onUnsupported: code => Notify($"{code} installer not ported yet — install it separately for now."));
+            await _installGate.WaitAsync();
+            try
+            {
+                await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} installer not ported yet — install it separately for now."));
+            }
+            finally { _installGate.Release(); }
             Notify("Install complete.");
         }
         catch (Exception ex) { Notify("Install failed: " + ex.Message); }
@@ -379,19 +423,24 @@ public partial class MainViewModel : ObservableObject
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
 
-            var patch = new GameUpdateService(_config);
-            var patched = await patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
-                GameLauncher.BuildArgs(BuildLaunchOptions()), reporter);
-            if (patched)
+            await _installGate.WaitAsync();
+            try
             {
-                Notify("Update applied — the patcher restarts OpenSO when it's done.");
+                var patch = new GameUpdateService(_config);
+                var patched = await patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
+                    GameLauncher.BuildArgs(BuildLaunchOptions()), reporter);
+                if (patched)
+                {
+                    Notify("Update applied — the patcher restarts OpenSO when it's done.");
+                }
+                else
+                {
+                    await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                        onUnsupported: code => Notify($"{code} not available."));
+                    Notify("Game updated. Press PLAY to launch.");
+                }
             }
-            else
-            {
-                await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
-                    onUnsupported: code => Notify($"{code} not available."));
-                Notify("Game updated. Press PLAY to launch.");
-            }
+            finally { _installGate.Release(); }
         }
         catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
@@ -412,8 +461,13 @@ public partial class MainViewModel : ObservableObject
                 Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
-            await _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
-                onUnsupported: code => Notify($"{code} installer not available."));
+            await _installGate.WaitAsync();
+            try
+            {
+                await _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} installer not available."));
+            }
+            finally { _installGate.Release(); }
             Notify("3D mesh pack installed.");
         }
         catch (Exception ex) { Notify("3D mesh pack failed: " + ex.Message); }

@@ -20,13 +20,16 @@ public record NewsItem(string Slug, string Title, string Date, string? Summary, 
 public sealed class NewsService
 {
     private readonly LauncherConfig _config;
-    private readonly HttpClient _http;
+    // Static: per-instance HttpClients are never disposed and leak socket handles (see StatusService).
+    private static readonly HttpClient Http = CreateClient();
 
-    public NewsService(LauncherConfig config)
+    public NewsService(LauncherConfig config) => _config = config;
+
+    private static HttpClient CreateClient()
     {
-        _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        return c;
     }
 
     private string Site => _config.WebsiteUrl.TrimEnd('/');
@@ -36,7 +39,7 @@ public sealed class NewsService
         var items = new List<NewsItem>();
         try
         {
-            var json = await _http.GetStringAsync($"{Site}/news/feed.json", ct);
+            var json = await Http.GetStringAsync($"{Site}/news/feed.json", ct);
             using var doc = JsonDocument.Parse(json);
             // feed.json is { "posts": [ {slug,title,date,author,summary,tags,image} ] }; tolerate a bare array too.
             var root = doc.RootElement;

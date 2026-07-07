@@ -46,10 +46,9 @@ public sealed class SdlInstaller : IComponentInstaller
             await new DownloadService(url, dmg).RunAsync(Scale(progress, "sdl", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("sdl", 0.9, "Installing SDL2 (you may be asked for your password)…"));
-            var escaped = dmg.Replace(" ", "\\ ");
             // Mount → remove any existing framework → copy in → unmount (matches sdl.js).
             var cmd =
-                $"hdiutil attach {escaped} && " +
+                $"hdiutil attach {ElevationService.ShQuote(dmg)} && " +
                 "rm -rf /Library/Frameworks/SDL2.framework && " +
                 "cp -R /Volumes/SDL2/SDL2.framework /Library/Frameworks && " +
                 "hdiutil unmount /Volumes/SDL2";

@@ -24,9 +24,13 @@ internal static class Program
         Console.WriteLine("OpenSO Launcher — logic tests\n");
 
         await Test("ZipExtractor round-trips a nested zip", TestZip);
+        await Test("ZipExtractor blocks zip-slip traversal and sibling-prefix escapes", TestZipSlipBlocked);
         await Test("CabExtractor extracts an MSZIP cab (if a sample is provided)", TestCab);
         await Test("DownloadService rejects a wrong MD5", TestMd5Mismatch);
         await Test("DownloadService accepts a correct MD5", TestMd5Match);
+        await Test("DownloadService rejects a wrong SHA-256", TestSha256Mismatch);
+        await Test("DownloadService accepts a correct SHA-256 (GitHub digest format)", TestSha256Match);
+        Test("ElevationService.ShQuote defuses shell metacharacters", TestShQuote);
         await Test("InstallStateService probes without throwing", TestInstallState);
         Test("Dependency graph resolves FSO deps for the current OS", TestDependencyGraph);
         Test("LauncherConfig points at OpenSO endpoints", TestConfig);
@@ -67,6 +71,46 @@ internal static class Program
 
         Assert(File.ReadAllText(Path.Combine(outDir, "root.txt")) == "root", "root.txt content");
         Assert(File.ReadAllText(Path.Combine(outDir, "sub", "nested.txt")) == "nested", "nested.txt content");
+    }
+
+    private static async Task TestZipSlipBlocked()
+    {
+        var tmp = NewTmp();
+        var outDir = Path.Combine(tmp, "inst");
+
+        static string MakeZip(string path, string entryName)
+        {
+            using var fs = File.Create(path);
+            using var za = new ZipArchive(fs, ZipArchiveMode.Create);
+            using var s = za.CreateEntry(entryName).Open();
+            s.WriteByte((byte)'x');
+            return path;
+        }
+
+        // Classic traversal: "../" resolves above the destination.
+        var zip1 = MakeZip(Path.Combine(tmp, "evil1.zip"), "../escaped.txt");
+        bool threw = false;
+        try { await ZipExtractor.ExtractAsync(zip1, outDir); } catch (IOException) { threw = true; }
+        Assert(threw, "traversal entry is blocked");
+        Assert(!File.Exists(Path.Combine(tmp, "escaped.txt")), "nothing written outside the destination");
+
+        // Sibling-prefix escape: "../instX/evil.txt" lands NEXT TO "inst" but shares its name prefix —
+        // a StartsWith check without a trailing separator would wave it through.
+        var zip2 = MakeZip(Path.Combine(tmp, "evil2.zip"), "../instX/evil.txt");
+        threw = false;
+        try { await ZipExtractor.ExtractAsync(zip2, outDir); } catch (IOException) { threw = true; }
+        Assert(threw, "sibling-prefix entry is blocked");
+        Assert(!File.Exists(Path.Combine(tmp, "instX", "evil.txt")), "no sibling directory written");
+
+        // Traversal via a DIRECTORY entry must not create folders outside the destination either.
+        var zip3 = MakeZip(Path.Combine(tmp, "evil3.zip"), "ok.txt");
+        using (var fs = new FileStream(zip3, FileMode.Open))
+        using (var za = new ZipArchive(fs, ZipArchiveMode.Update))
+            za.CreateEntry("../outdir/");
+        threw = false;
+        try { await ZipExtractor.ExtractAsync(zip3, outDir); } catch (IOException) { threw = true; }
+        Assert(threw, "traversal directory entry is blocked");
+        Assert(!Directory.Exists(Path.Combine(tmp, "outdir")), "no directory created outside the destination");
     }
 
     private static async Task TestCab()
@@ -116,6 +160,49 @@ internal static class Program
             Assert(File.Exists(dest), "correct md5 download succeeds");
         }
         finally { stop(); }
+    }
+
+    private static async Task TestSha256Mismatch()
+    {
+        var (url, stop) = await LocalServer.ServeBytes(System.Text.Encoding.ASCII.GetBytes("openso payload"));
+        try
+        {
+            var dest = Path.Combine(NewTmp(), "dl.bin");
+            var dl = new DownloadService(url, dest, expectedSha256: "sha256:" + new string('0', 64));
+            bool threw = false;
+            try { await dl.RunAsync(); } catch (ChecksumMismatchException) { threw = true; }
+            Assert(threw, "wrong sha256 causes ChecksumMismatchException");
+            Assert(!File.Exists(dest), "tampered download is deleted");
+        }
+        finally { stop(); }
+    }
+
+    private static async Task TestSha256Match()
+    {
+        var payload = System.Text.Encoding.ASCII.GetBytes("openso payload");
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant();
+        var (url, stop) = await LocalServer.ServeBytes(payload);
+        try
+        {
+            var dest = Path.Combine(NewTmp(), "dl.bin");
+            // GitHub's release-asset `digest` field ships as "sha256:<hex>" — accept it verbatim.
+            var dl = new DownloadService(url, dest, expectedSha256: "sha256:" + sha);
+            await dl.RunAsync();
+            Assert(File.Exists(dest), "correct sha256 download succeeds");
+        }
+        finally { stop(); }
+    }
+
+    private static void TestShQuote()
+    {
+        Assert(ElevationService.ShQuote("/tmp/plain.dmg") == "'/tmp/plain.dmg'", "plain path is single-quoted");
+        Assert(ElevationService.ShQuote("/tmp/has space.dmg") == "'/tmp/has space.dmg'", "spaces stay inside quotes");
+        // A crafted name trying to break out of the quoting must stay inert data.
+        var evil = "/tmp/x'; rm -rf /; echo '.dmg";
+        Assert(ElevationService.ShQuote(evil) == "'/tmp/x'\\''; rm -rf /; echo '\\''.dmg'",
+            "embedded single quote is escaped, injection stays quoted");
+        Assert(ElevationService.ShQuote("$(reboot) && `id`") == "'$(reboot) && `id`'",
+            "command substitution and && are inert inside single quotes");
     }
 
     private static async Task TestInstallState()
@@ -345,6 +432,20 @@ internal static class Program
             ("OpenSO-client-win-x64.incremental.zip", "u-incremental"),
         };
         Assert(FsoInstaller.PickFullClientAsset(reordered, "win-x64") == "u-full", "full zip wins regardless of order");
+
+        // Digest-aware overload: the picked asset's GitHub digest rides along for download verification.
+        var withDigests = new (string?, string?, string?)[]
+        {
+            ("OpenSO-client-win-x64.incremental.zip", "u-incremental", "sha256:aaa"),
+            ("OpenSO-client-win-x64.zip",             "u-full",        "sha256:bbb"),
+        };
+        var picked = FsoInstaller.PickFullClientAsset(withDigests, "win-x64");
+        Assert(picked.url == "u-full" && picked.sha256 == "sha256:bbb", "digest of the picked asset is returned");
+        var noDigest = FsoInstaller.PickFullClientAsset(new (string?, string?, string?)[]
+        {
+            ("OpenSO-client-win-x64.zip", "u-full", null),
+        }, "win-x64");
+        Assert(noDigest.url == "u-full" && noDigest.sha256 == null, "missing digest stays null (unverified download still works)");
     }
 
     // Diagnostic: run the REAL client update the launcher performs (resolve latest -> download ->
