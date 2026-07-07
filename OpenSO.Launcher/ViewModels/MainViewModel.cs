@@ -74,9 +74,14 @@ public partial class MainViewModel : ObservableObject
 
     // ---- Shared state -----------------------------------------------------------------------------
     [ObservableProperty] private string _statusLine = "Starting up…";
+    // Loud, dedicated error surface (bound to a red banner on the Downloads page) so a blocked/failed
+    // operation isn't buried as raw exception text in the progress subtext.
+    [ObservableProperty] private bool _hasError;
+    [ObservableProperty] private string _errorMessage = "";
     [ObservableProperty] private string _clientState = "Checking…";
     [ObservableProperty] private string _assetsState = "Checking…";
     [ObservableProperty] private double _progress;
+    [ObservableProperty] private bool _progressIndeterminate;
     [ObservableProperty] private string _progressDetail = "";
     [ObservableProperty] private bool _busy;
     [ObservableProperty]
@@ -335,6 +340,34 @@ public partial class MainViewModel : ObservableObject
         StatusLine = message;
     }
 
+    /// <summary>Clears the loud error banner — call when starting a new operation.</summary>
+    private void ClearError() { HasError = false; ErrorMessage = ""; }
+
+    /// <summary>The progress reporter every install/update uses — updates the bar (value + indeterminate),
+    /// the detail subtext, and the status line from one place.</summary>
+    private IProgress<ProgressReport> MakeReporter() => new Progress<ProgressReport>(r =>
+    {
+        Progress = r.Fraction;
+        ProgressIndeterminate = r.IsIndeterminate;
+        ProgressDetail = r.Detail ?? "";
+        StatusLine = $"{r.Stage}: {r.Detail}";
+    });
+
+    /// <summary>Central handler for a failed install/update/remesh. A file-in-use failure gets a loud,
+    /// specific message naming the locking process (see <see cref="FileLocks"/>) rather than the raw
+    /// IOException text buried in the progress subtext; everything else gets a clear "&lt;what&gt; failed".</summary>
+    private void HandleOperationFailure(string what, Exception ex)
+    {
+        Log.Error($"{what} failed", ex);
+        string message = FileLocks.IsFileInUse(ex)
+            ? "Couldn't update the game — " + FileLocks.Explain(ex)
+            : $"{what} failed: {ex.Message}";
+        ErrorMessage = message;
+        HasError = true;
+        Notify(message);       // also lands in the Notifications list + status line
+        Section = "DOWNLOADS";  // make sure the banner is on-screen
+    }
+
     [RelayCommand] private void OpenNews(NewsItem item) => _news.OpenPost(item.Slug);
     [RelayCommand] private void OpenWebsite() => _news.OpenWebsite();
     [RelayCommand] private void OpenDiscord() => NewsService.OpenUrl("https://openso.org");
@@ -406,7 +439,10 @@ public partial class MainViewModel : ObservableObject
     {
         if (ClientInstalled && GameProcessGuard.IsGameRunning(_fsoPath))
         {
-            Notify("OpenSO is running. Close the game first, then try again.");
+            ErrorMessage = "OpenSO is running. Close the game completely, then try again.";
+            HasError = true;
+            Notify(ErrorMessage);
+            Section = "DOWNLOADS";
             return true;
         }
         return false;
@@ -416,15 +452,12 @@ public partial class MainViewModel : ObservableObject
     private async Task InstallAsync()
     {
         if (Busy || BlockedByRunningGame()) return;
+        ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify("Preparing installation…");
         try
         {
-            var reporter = new Progress<ProgressReport>(r =>
-            {
-                Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
-                StatusLine = $"{r.Stage}: {r.Detail}";
-            });
+            var reporter = MakeReporter();
             await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
@@ -437,7 +470,7 @@ public partial class MainViewModel : ObservableObject
             Notify("Install complete.");
         }
         catch (OperationCanceledException) { /* launcher closing */ }
-        catch (Exception ex) { Log.Error("Client install failed", ex); Notify("Install failed: " + ex.Message); }
+        catch (Exception ex) { HandleOperationFailure("Install", ex); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -458,16 +491,12 @@ public partial class MainViewModel : ObservableObject
     private async Task UpdateGameAsync()
     {
         if (Busy || BlockedByRunningGame()) return;
+        ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify($"Updating the game to match the server ({ServerGameVersion})…");
         try
         {
-            var reporter = new Progress<ProgressReport>(r =>
-            {
-                Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
-                StatusLine = $"{r.Stage}: {r.Detail}";
-            });
-
+            var reporter = MakeReporter();
             await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
@@ -491,7 +520,7 @@ public partial class MainViewModel : ObservableObject
             finally { _installGate.Release(); }
         }
         catch (OperationCanceledException) { /* launcher closing */ }
-        catch (Exception ex) { Log.Error("Game update failed", ex); Notify("Game update failed: " + ex.Message); }
+        catch (Exception ex) { HandleOperationFailure("Game update", ex); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -501,15 +530,12 @@ public partial class MainViewModel : ObservableObject
         if (Busy || BlockedByRunningGame()) return;
         if (!ClientInstalled) { Notify("Install the OpenSO client first, then add the 3D mesh pack."); Section = "INSTALLER"; return; }
 
+        ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify("Installing the 3D mesh pack…");
         try
         {
-            var reporter = new Progress<ProgressReport>(r =>
-            {
-                Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
-                StatusLine = $"{r.Stage}: {r.Detail}";
-            });
+            var reporter = MakeReporter();
             await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
@@ -521,7 +547,7 @@ public partial class MainViewModel : ObservableObject
             Notify("3D mesh pack installed.");
         }
         catch (OperationCanceledException) { /* launcher closing */ }
-        catch (Exception ex) { Log.Error("3D mesh pack install failed", ex); Notify("3D mesh pack failed: " + ex.Message); }
+        catch (Exception ex) { HandleOperationFailure("3D mesh pack install", ex); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -530,9 +556,10 @@ public partial class MainViewModel : ObservableObject
     {
         if (Busy || UpdateVersion == null) return;
         Busy = true;
+        ClearError();
         try
         {
-            var reporter = new Progress<ProgressReport>(r => { Progress = r.Fraction; StatusLine = $"{r.Stage}: {r.Detail}"; });
+            var reporter = MakeReporter();
             await _selfUpdate.ApplyLauncherUpdateAsync(reporter);
             StatusLine = "Restarting to finish the update…";
             // Shut down through the Avalonia lifetime so App cancels background work and Main's

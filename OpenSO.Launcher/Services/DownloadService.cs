@@ -89,7 +89,9 @@ public sealed class DownloadService
                                 windowStartMs = nowMs;
                             }
                             lastReportMs = nowMs;
-                            progress?.Report(new ProgressReport("download", Fraction(), FormatDetail()));
+                            // No Content-Length (Length<=0) -> fraction is meaningless; flag indeterminate
+                            // so the UI pulses instead of sitting at a stuck 0% (the big TSO archive does this).
+                            progress?.Report(new ProgressReport("download", Fraction(), FormatDetail(), Length <= 0));
                         }
                     }
                     await file.FlushAsync(ct);

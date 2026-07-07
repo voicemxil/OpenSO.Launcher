@@ -80,7 +80,7 @@ public sealed class GameUpdateService
                 double lo = 0.85 * i / downloads.Count, hi = 0.85 * (i + 1) / downloads.Count;
                 progress.Report(new ProgressReport("update", lo, $"Downloading {name}…"));
                 var dl = new DownloadService(url, Path.Combine(patchDir, name));
-                await dl.RunAsync(Scale(progress, "update", lo, hi, $"Downloading {name}… "), ct);
+                await dl.RunAsync(ProgressScaler.Scale(progress, "update", lo, hi, $"Downloading {name}… "), ct);
             }
         }
         catch (Exception ex)
@@ -173,11 +173,4 @@ public sealed class GameUpdateService
         }
         catch { /* best effort */ }
     }
-
-    /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
 }

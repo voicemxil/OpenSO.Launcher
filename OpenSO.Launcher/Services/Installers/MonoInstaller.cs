@@ -44,7 +44,7 @@ public sealed class MonoInstaller : IComponentInstaller
                 : throw new InvalidOperationException("No Mono download URL configured.");
 
             progress.Report(new ProgressReport("mono", 0, "Downloading Mono runtime…"));
-            await new DownloadService(url, pkg).RunAsync(Scale(progress, "mono", 0.0, 0.85), ct);
+            await new DownloadService(url, pkg).RunAsync(ProgressScaler.Scale(progress, "mono", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("mono", 0.9, "Installing Mono (you may be asked for your password)…"));
             var res = await _elevation.RunAsync($"installer -pkg {ElevationService.ShQuote(pkg)} -target /",
@@ -76,7 +76,4 @@ public sealed class MonoInstaller : IComponentInstaller
         }
         catch { return false; }
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage, double lo, double hi) =>
-        new Progress<ProgressReport>(r => outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction, r.Detail)));
 }

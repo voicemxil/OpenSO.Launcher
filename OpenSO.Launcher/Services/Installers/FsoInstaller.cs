@@ -62,7 +62,7 @@ public sealed class FsoInstaller : IComponentInstaller
         var tempDir = TempFiles.NewDir("client");
         var tempZip = Path.Combine(tempDir, "client.zip");
         var dl = new DownloadService(zipUrl, tempZip, expectedSha256: zipSha256);
-        await dl.RunAsync(Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
+        await dl.RunAsync(ProgressScaler.Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
 
         // ATOMIC UPDATE. Never extract directly into the live install dir: an interrupted extract (network
         // drop, I/O error, cancellation, crash) would leave it half-gutted with the self-contained .NET
@@ -82,7 +82,7 @@ public sealed class FsoInstaller : IComponentInstaller
             // (and OpenSO.app's executable) keep their +x bit — otherwise the game can't launch.
             TryDeleteDir(staging);
             await ZipExtractor.ExtractAsync(tempZip, staging,
-                Scale(progress, "client", 0.70, 0.90, "Extracting client files… "), preservePermissions: true, ct);
+                ProgressScaler.Scale(progress, "client", 0.70, 0.90, "Extracting client files… "), preservePermissions: true, ct);
 
             // Step 4b: verify the staged client is COMPLETE before we touch the live install. This is the
             // guard against shipping/keeping a truncated extract (the exact failure that gutted the runtime).
@@ -354,11 +354,4 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         return Http.SendAsync(req, ct);
     }
-
-    /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
 }

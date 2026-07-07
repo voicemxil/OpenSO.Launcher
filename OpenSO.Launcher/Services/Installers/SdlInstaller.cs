@@ -44,7 +44,7 @@ public sealed class SdlInstaller : IComponentInstaller
                 : throw new InvalidOperationException("No SDL download URL configured.");
 
             progress.Report(new ProgressReport("sdl", 0, "Downloading SDL2…"));
-            await new DownloadService(url, dmg).RunAsync(Scale(progress, "sdl", 0.0, 0.85), ct);
+            await new DownloadService(url, dmg).RunAsync(ProgressScaler.Scale(progress, "sdl", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("sdl", 0.9, "Installing SDL2 (you may be asked for your password)…"));
             // Mount → remove any existing framework → copy in → unmount (matches sdl.js).
@@ -81,7 +81,4 @@ public sealed class SdlInstaller : IComponentInstaller
         }
         catch { return false; }
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage, double lo, double hi) =>
-        new Progress<ProgressReport>(r => outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction, r.Detail)));
 }

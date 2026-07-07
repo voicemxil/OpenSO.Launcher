@@ -61,10 +61,10 @@ public sealed class RmsInstaller : IComponentInstaller
         try
         {
             var dl = new DownloadService(zipUrl, tempZip, expectedSha256: zipSha256);
-            await dl.RunAsync(Scale(progress, "rms", 0.00, 0.80, "Downloading 3D meshes… "), ct);
+            await dl.RunAsync(ProgressScaler.Scale(progress, "rms", 0.00, 0.80, "Downloading 3D meshes… "), ct);
 
             await ZipExtractor.ExtractAsync(tempZip, unzipDir,
-                Scale(progress, "rms", 0.80, 0.92, "Unpacking… "), preservePermissions: false, ct);
+                ProgressScaler.Scale(progress, "rms", 0.80, 0.92, "Unpacking… "), preservePermissions: false, ct);
 
             // Normalize the layout. The community zip wraps the meshes as
             // "FreeSO Remesh Package/MeshReplace/*.fsom"; a CI artifact may ship them flat. Either way,
@@ -186,10 +186,4 @@ public sealed class RmsInstaller : IComponentInstaller
         req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
         return Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
 }

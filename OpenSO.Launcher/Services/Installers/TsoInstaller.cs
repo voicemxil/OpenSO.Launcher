@@ -56,12 +56,12 @@ public sealed class TsoInstaller : IComponentInstaller
             // progress fraction can read 0 until done — that's expected (matches upstream's note).
             progress.Report(new ProgressReport("tso", 0, "Downloading The Sims Online (~1.27 GB, from the Internet Archive)…"));
             var dl = new DownloadService(source, zipPath, _config.TsoAssetsMd5);
-            await dl.RunAsync(Scale(progress, "tso", 0.00, 0.60), ct);
+            await dl.RunAsync(ProgressScaler.Scale(progress, "tso", 0.00, 0.60), ct);
 
             // Step 2 + 3: ensure install dir, unzip distribution to temp.
             Directory.CreateDirectory(installPath);
             await ZipExtractor.ExtractAsync(zipPath, unzipDir,
-                Scale(progress, "tso", 0.60, 0.72, "Unpacking installer… "), false, ct);
+                ProgressScaler.Scale(progress, "tso", 0.60, 0.72, "Unpacking installer… "), false, ct);
 
             // Free the 1.27 GB download now that the cabs are unpacked — it's no longer needed, and
             // keeping it would inflate the peak disk usage during the (large) cab extraction below.
@@ -84,7 +84,7 @@ public sealed class TsoInstaller : IComponentInstaller
             // from the client's working dir, its sibling) and the Maxis registry InstallDir + "\TSOClient\".
             // (Extracting into a TSOClient subfolder here would double it to TSOClient/TSOClient/.)
             await CabExtractor.ExtractAsync(firstCab, installPath,
-                Scale(progress, "tso", 0.72, 0.97, "Extracting game files… "), purge: true, ct);
+                ProgressScaler.Scale(progress, "tso", 0.72, 0.97, "Extracting game files… "), purge: true, ct);
 
             // Step 5: register the Maxis/TSO install (InstallDir = the "The Sims Online" parent of TSOClient).
             progress.Report(new ProgressReport("tso", 0.98, "Registering install…"));
@@ -117,10 +117,4 @@ public sealed class TsoInstaller : IComponentInstaller
         catch (IOException) { throw; }
         catch { /* DriveInfo unavailable for this path — skip the pre-flight check rather than block. */ }
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
 }

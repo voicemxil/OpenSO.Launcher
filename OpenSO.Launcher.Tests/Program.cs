@@ -34,6 +34,8 @@ internal static class Program
         Test("RemoteUrl.RequireHttps allows https and rejects http/other schemes", TestRemoteUrl);
         Test("TempFiles.NewDir returns a fresh, unique, existing directory", TestTempFiles);
         Test("GameProcessGuard reports no running game for an unrelated dir", TestGameProcessGuard);
+        Test("FileLocks detects an in-use IOException and extracts the path", TestFileLocks);
+        Test("ProgressScaler maps a child fraction into a band and forwards indeterminate", TestProgressScaler);
         await Test("InstallStateService probes without throwing", TestInstallState);
         Test("Dependency graph resolves FSO deps for the current OS", TestDependencyGraph);
         Test("LauncherConfig points at OpenSO endpoints", TestConfig);
@@ -206,6 +208,35 @@ internal static class Program
             "embedded single quote is escaped, injection stays quoted");
         Assert(ElevationService.ShQuote("$(reboot) && `id`") == "'$(reboot) && `id`'",
             "command substitution and && are inert inside single quotes");
+    }
+
+    private static void TestFileLocks()
+    {
+        // The framework message for a locked file: "... the file 'PATH' because it is being used by another process."
+        var locked = new IOException("The process cannot access the file 'C:\\OpenSO\\OpenSO.dll' because it is being used by another process.");
+        Assert(FileLocks.IsFileInUse(locked), "recognizes the 'being used by another process' message");
+        Assert(FileLocks.TryExtractPath(locked) == "C:\\OpenSO\\OpenSO.dll", "extracts the quoted path");
+        Assert(FileLocks.Explain(locked).Contains("OpenSO.dll"), "explanation names the file");
+
+        // Wrapped (DownloadService rethrows as IOException with an inner) — must still be detected.
+        var wrapped = new IOException("Download failed.", locked);
+        Assert(FileLocks.IsFileInUse(wrapped), "walks the inner-exception chain");
+
+        // An unrelated failure is not a file-in-use.
+        Assert(!FileLocks.IsFileInUse(new InvalidOperationException("no url")), "non-IO error is not file-in-use");
+    }
+
+    private static void TestProgressScaler()
+    {
+        ProgressReport captured = null!;
+        var outer = new Progress<ProgressReport>(r => captured = r);
+        var scaled = ProgressScaler.Scale(outer, "client", 0.20, 0.60, "Extracting… ");
+        scaled.Report(new ProgressReport("child", 0.5, "file.dat", IsIndeterminate: true));
+        System.Threading.Thread.Sleep(50); // Progress<T> posts asynchronously
+        Assert(captured != null, "outer received a report");
+        Assert(Math.Abs(captured.Fraction - 0.40) < 1e-9, "0.5 of [0.20,0.60] band -> 0.40");
+        Assert(captured.Stage == "client" && captured.Detail == "Extracting… file.dat", "stage + prefixed detail");
+        Assert(captured.IsIndeterminate, "indeterminate flag is forwarded");
     }
 
     private static void TestGameProcessGuard()
