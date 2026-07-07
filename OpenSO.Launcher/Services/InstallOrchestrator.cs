@@ -95,8 +95,7 @@ public sealed class InstallOrchestrator
     private void RegisterInstall(string code, string dir)
     {
         // Registry entry (Windows + elevated). Non-fatal if it fails — the marker covers detection.
-        // Registry entry (Windows + elevated). Non-fatal if it fails — the marker covers detection.
-        try { _registry.Write(code, dir); } catch { /* fall back to marker */ }
+        try { _registry.Write(code, dir); } catch (Exception ex) { Log.Warn($"Registry write for {code} failed; relying on the install marker", ex); }
 
         // Per-user marker (always).
         try

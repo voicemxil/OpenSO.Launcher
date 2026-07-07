@@ -38,7 +38,8 @@ public sealed class MonoInstaller : IComponentInstaller
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             // Download the .pkg, then install it system-wide with elevation.
-            var pkg = Path.Combine(Path.GetTempPath(), $"openso-mono-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.pkg");
+            var work = TempFiles.NewDir("mono");
+            var pkg = Path.Combine(work, "mono.pkg");
             var url = _config.ResourceCentral.TryGetValue("Mono", out var u) ? u
                 : throw new InvalidOperationException("No Mono download URL configured.");
 
@@ -48,7 +49,7 @@ public sealed class MonoInstaller : IComponentInstaller
             progress.Report(new ProgressReport("mono", 0.9, "Installing Mono (you may be asked for your password)…"));
             var res = await _elevation.RunAsync($"installer -pkg {ElevationService.ShQuote(pkg)} -target /",
                 "OpenSO needs to install the Mono runtime", ct);
-            try { File.Delete(pkg); } catch { }
+            try { Directory.Delete(work, true); } catch { }
 
             if (!res.Success) throw new IOException("Mono install failed: " + res.StdErr);
             progress.Report(new ProgressReport("mono", 1.0, "Mono installed."));

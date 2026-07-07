@@ -72,18 +72,20 @@ public sealed class GameUpdateService
             for (int i = 0; i < downloads.Count; i++)
             {
                 var (url, name) = downloads[i];
+                RemoteUrl.RequireHttps(url, $"update file {name}");
                 double lo = 0.85 * i / downloads.Count, hi = 0.85 * (i + 1) / downloads.Count;
                 progress.Report(new ProgressReport("update", lo, $"Downloading {name}…"));
                 var dl = new DownloadService(url, Path.Combine(patchDir, name));
                 await dl.RunAsync(Scale(progress, "update", lo, hi, $"Downloading {name}… "), ct);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // A half-staged PatchFiles dir would be picked up (and applied!) by the next patcher
             // run, in-client or otherwise — remove it, then let the caller fall back / report.
             // Retried: a transiently-locked file here (AV scan, lagging handle) would otherwise
             // leave the stale dir behind for the next patcher run to corrupt the install with.
+            Log.Warn("Staging the incremental update failed; cleaning PatchFiles and falling back", ex);
             TryDeleteDirWithRetry(patchDir);
             throw;
         }
@@ -117,7 +119,7 @@ public sealed class GameUpdateService
             if (!resp.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<List<ApiUpdate>>(await resp.Content.ReadAsStringAsync(ct));
         }
-        catch { return null; }
+        catch (Exception ex) { Log.Warn("Update feed unavailable; the game-update path will fall back to a full reinstall", ex); return null; }
     }
 
     /// <summary>

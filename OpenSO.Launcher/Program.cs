@@ -1,4 +1,5 @@
 using Avalonia;
+using OpenSO.Launcher.Services;
 
 namespace OpenSO.Launcher;
 
@@ -7,7 +8,27 @@ internal static class Program
     [System.STAThread]
     public static void Main(string[] args)
     {
-        var exitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        Log.Init();
+        // Last-resort breadcrumbs: without these, a fatal on a background thread or an unobserved task
+        // exception vanishes with the process and there's nothing to debug from a user's report.
+        System.AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            Log.Error("Unhandled exception", e.ExceptionObject as System.Exception);
+        System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log.Error("Unobserved task exception", e.Exception);
+            e.SetObserved();
+        };
+
+        int exitCode;
+        try
+        {
+            exitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+        }
+        catch (System.Exception ex)
+        {
+            Log.Error("Fatal: the launcher crashed during startup/run", ex);
+            throw;
+        }
 
         // Backstop: closing the window must always end the launcher process. By the time
         // StartWithClassicDesktopLifetime returns, the Avalonia lifetime has shut down and App has

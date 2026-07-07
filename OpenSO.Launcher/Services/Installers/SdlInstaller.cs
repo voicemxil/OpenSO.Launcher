@@ -38,7 +38,8 @@ public sealed class SdlInstaller : IComponentInstaller
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            var dmg = Path.Combine(Path.GetTempPath(), $"openso-sdl-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.dmg");
+            var work = TempFiles.NewDir("sdl");
+            var dmg = Path.Combine(work, "sdl.dmg");
             var url = _config.ResourceCentral.TryGetValue("SDL", out var u) ? u
                 : throw new InvalidOperationException("No SDL download URL configured.");
 
@@ -53,7 +54,7 @@ public sealed class SdlInstaller : IComponentInstaller
                 "cp -R /Volumes/SDL2/SDL2.framework /Library/Frameworks && " +
                 "hdiutil unmount /Volumes/SDL2";
             var res = await _elevation.RunAsync(cmd, "OpenSO needs to install SDL2", ct);
-            try { File.Delete(dmg); } catch { }
+            try { Directory.Delete(work, true); } catch { }
 
             if (!res.Success) throw new IOException("SDL2 install failed: " + res.StdErr);
             progress.Report(new ProgressReport("sdl", 1.0, "SDL2 installed."));

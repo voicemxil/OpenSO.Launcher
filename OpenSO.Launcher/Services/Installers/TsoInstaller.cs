@@ -46,8 +46,7 @@ public sealed class TsoInstaller : IComponentInstaller
         var source = _config.ResourceCentral.TryGetValue("TheSimsOnline", out var url)
             ? url : _config.TsoAssetsBaseUrl;
 
-        var work = Path.Combine(Path.GetTempPath(), $"openso-tso-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-        Directory.CreateDirectory(work);
+        var work = TempFiles.NewDir("tso");
         var zipPath = Path.Combine(work, "tso.zip");
         var unzipDir = Path.Combine(work, "client");
 

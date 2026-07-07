@@ -52,10 +52,10 @@ public sealed class SelfUpdateService : ISelfUpdateService
         var (tag, assetUrl, assetSha256) = await ResolveLatestAsync(ct);
         if (tag == null || assetUrl == null)
             throw new InvalidOperationException("No launcher update asset is available for this platform.");
+        RemoteUrl.RequireHttps(assetUrl, "the launcher update");
 
         var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-        var staging = Path.Combine(Path.GetTempPath(), "openso-launcher-update-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(staging);
+        var staging = TempFiles.NewDir("launcher-update");
         var tmpZip = Path.Combine(staging, "launcher.zip");
         var newDir = Path.Combine(staging, "new");
 

@@ -49,11 +49,13 @@ public sealed class FsoInstaller : IComponentInstaller
         var (zipUrl, zipSha256) = await ResolveClientZipUrlAsync(ct);
         if (zipUrl == null)
             throw new InvalidOperationException("Could not obtain OpenSO client release information.");
+        RemoteUrl.RequireHttps(zipUrl, "the OpenSO client");
 
         // Step 2: download. zipSha256 is GitHub's release-asset digest when the release feed supplied
         // one — verifying it stops a tampered/corrupted client zip before it ever reaches staging.
         var stamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var tempZip = Path.Combine(Path.GetTempPath(), $"openso-client-{stamp}.zip");
+        var tempDir = TempFiles.NewDir("client");
+        var tempZip = Path.Combine(tempDir, "client.zip");
         var dl = new DownloadService(zipUrl, tempZip, expectedSha256: zipSha256);
         await dl.RunAsync(Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
 
@@ -113,8 +115,8 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         finally
         {
-            TryDelete(tempZip);   // matches fso.js end() -> dl.cleanup()
-            TryDeleteDir(backup); // on success this is the old install; on a restored failure it's already gone
+            TryDeleteDir(tempDir); // the downloaded zip + its temp dir (fso.js end() -> dl.cleanup())
+            TryDeleteDir(backup);  // on success this is the old install; on a restored failure it's already gone
         }
     }
 
@@ -265,7 +267,7 @@ public sealed class FsoInstaller : IComponentInstaller
                 }
             }
         }
-        catch { /* fall through to GitHub */ }
+        catch (Exception ex) { Log.Warn("Client manifest lookup failed; falling back to the GitHub release feed", ex); }
 
         // 2) GitHub releases fallback. See PickFullClientAsset for the selection rules (per-platform +
         //    must be the FULL client zip, not the incremental delta / manifest).
@@ -285,7 +287,7 @@ public sealed class FsoInstaller : IComponentInstaller
                 if (picked.url != null) return picked;
             }
         }
-        catch { /* no URL */ }
+        catch (Exception ex) { Log.Warn("GitHub client release lookup failed; no client URL resolved", ex); }
 
         return (null, null);
     }
@@ -347,8 +349,6 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         return Http.SendAsync(req, ct);
     }
-
-    private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
 
     /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
     private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,

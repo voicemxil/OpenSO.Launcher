@@ -38,10 +38,20 @@ public partial class MainViewModel : ObservableObject
     /// RefreshAsync in each command's finally doesn't deadlock on its own gate.</summary>
     private readonly SemaphoreSlim _installGate = new(1, 1);
 
-    /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
+    /// <summary>The install/update/remesh operation currently in flight (or a completed task). Tracked so
+    /// Shutdown can cancel it and wait briefly for it to unwind before the process is killed.</summary>
+    private Task _activeInstall = Task.CompletedTask;
+
+    /// <summary>Stops all periodic background work and cancels any in-flight install. Called by App when
+    /// the Avalonia lifetime exits. Waits a bounded time for a running download/extract to observe the
+    /// cancellation and stop cleanly, so Program's Environment.Exit can't kill it mid-write.</summary>
     public void Shutdown()
     {
         try { _shutdownCts.Cancel(); } catch (ObjectDisposedException) { }
+        // Give an in-flight install up to 3s to unwind (it checks the token in its download/extract
+        // loops). The task swallows its own exceptions, and cancellation surfaces as a faulted Wait —
+        // either way we're exiting, so ignore the outcome.
+        try { _activeInstall.Wait(TimeSpan.FromSeconds(3)); } catch { }
     }
 
     // ---- Navigation -------------------------------------------------------------------------------
@@ -270,10 +280,29 @@ public partial class MainViewModel : ObservableObject
         var server = NormalizeVersion(ServerGameVersion);
         var local = NormalizeVersion(InstalledGameVersion);
         // Missing local version => an old install from before version.txt => treat as needing an update.
-        GameUpdateAvailable = string.IsNullOrEmpty(local) || !string.Equals(local, server, StringComparison.OrdinalIgnoreCase);
+        GameUpdateAvailable = string.IsNullOrEmpty(local) || !SameVersion(local, server);
     }
 
     private static string NormalizeVersion(string? v) => (v ?? "").Trim().TrimStart('v', 'V');
+
+    /// <summary>Version equality that treats "1.2.3" and "1.2.3.0" as the same (a plain string compare
+    /// would flag a phantom update). Pads both to four numeric components before comparing — System.Version
+    /// otherwise stores an unspecified revision as -1, so 1.2.3 != 1.2.3.0. Non-numeric versions fall back
+    /// to a case-insensitive string compare.</summary>
+    private static bool SameVersion(string a, string b)
+    {
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
+        if (Version.TryParse(Pad4(a), out var va) && Version.TryParse(Pad4(b), out var vb)) return va == vb;
+        return false;
+
+        static string Pad4(string s)
+        {
+            var parts = s.Split('.');
+            var padded = new string[4];
+            for (int i = 0; i < 4; i++) padded[i] = i < parts.Length ? parts[i] : "0";
+            return string.Join('.', padded);
+        }
+    }
 
     /// <summary>Reads the client's stamped version (the release CI writes &lt;install&gt;/version.txt).</summary>
     private static string? ReadGameVersion(string? fsoDir)
@@ -297,7 +326,7 @@ public partial class MainViewModel : ObservableObject
     private async Task CheckLauncherUpdateAsync()
     {
         try { UpdateVersion = await _selfUpdate.CheckForLauncherUpdateAsync(); }
-        catch { /* offline */ }
+        catch (Exception ex) { Log.Warn("Launcher update check failed (offline?)", ex); }
     }
 
     private void Notify(string message)
@@ -345,6 +374,7 @@ public partial class MainViewModel : ObservableObject
             try { proc = _launcher.Launch(_fsoPath!, opts); }
             catch (Exception ex)
             {
+                Log.Error("Game launch failed", ex);
                 if (OperatingSystem.IsMacOS() && await _launcher.ShowMacBlockedHelpAsync(_fsoPath!)) continue;
                 Notify("Couldn't launch OpenSO: " + ex.Message);
                 return;
@@ -383,16 +413,19 @@ public partial class MainViewModel : ObservableObject
                 Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
-            await _installGate.WaitAsync();
+            await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
-                await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
-                    onUnsupported: code => Notify($"{code} installer not ported yet — install it separately for now."));
+                _activeInstall = _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} installer not ported yet — install it separately for now."),
+                    _shutdownCts.Token);
+                await _activeInstall;
             }
             finally { _installGate.Release(); }
             Notify("Install complete.");
         }
-        catch (Exception ex) { Notify("Install failed: " + ex.Message); }
+        catch (OperationCanceledException) { /* launcher closing */ }
+        catch (Exception ex) { Log.Error("Client install failed", ex); Notify("Install failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -423,26 +456,30 @@ public partial class MainViewModel : ObservableObject
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
 
-            await _installGate.WaitAsync();
+            await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
                 var patch = new GameUpdateService(_config);
-                var patched = await patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
-                    GameLauncher.BuildArgs(BuildLaunchOptions()), reporter);
+                var patchTask = patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
+                    GameLauncher.BuildArgs(BuildLaunchOptions()), reporter, _shutdownCts.Token);
+                _activeInstall = patchTask;
+                var patched = await patchTask;
                 if (patched)
                 {
                     Notify("Update applied — the patcher restarts OpenSO when it's done.");
                 }
                 else
                 {
-                    await _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
-                        onUnsupported: code => Notify($"{code} not available."));
+                    _activeInstall = _orchestrator.InstallAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                        onUnsupported: code => Notify($"{code} not available."), _shutdownCts.Token);
+                    await _activeInstall;
                     Notify("Game updated. Press PLAY to launch.");
                 }
             }
             finally { _installGate.Release(); }
         }
-        catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
+        catch (OperationCanceledException) { /* launcher closing */ }
+        catch (Exception ex) { Log.Error("Game update failed", ex); Notify("Game update failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -461,16 +498,18 @@ public partial class MainViewModel : ObservableObject
                 Progress = r.Fraction; ProgressDetail = r.Detail ?? "";
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
-            await _installGate.WaitAsync();
+            await _installGate.WaitAsync(_shutdownCts.Token);
             try
             {
-                await _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
-                    onUnsupported: code => Notify($"{code} installer not available."));
+                _activeInstall = _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} installer not available."), _shutdownCts.Token);
+                await _activeInstall;
             }
             finally { _installGate.Release(); }
             Notify("3D mesh pack installed.");
         }
-        catch (Exception ex) { Notify("3D mesh pack failed: " + ex.Message); }
+        catch (OperationCanceledException) { /* launcher closing */ }
+        catch (Exception ex) { Log.Error("3D mesh pack install failed", ex); Notify("3D mesh pack failed: " + ex.Message); }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
     }
 
@@ -492,6 +531,6 @@ public partial class MainViewModel : ObservableObject
             else
                 Environment.Exit(0);
         }
-        catch (Exception ex) { Notify("Launcher update failed: " + ex.Message); Busy = false; }
+        catch (Exception ex) { Log.Error("Launcher self-update failed", ex); Notify("Launcher update failed: " + ex.Message); Busy = false; }
     }
 }

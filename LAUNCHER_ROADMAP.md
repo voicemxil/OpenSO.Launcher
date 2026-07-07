@@ -67,36 +67,40 @@ These are exploitable or cause silent data loss / dead UI.
 
 ## P2 — Reliability & observability (do together, high leverage)
 
-- [ ] **Add real logging + crash reporting** — there is no log file today; failures become
-  `Notify("Install failed: " + ex.Message)` and vanish. ~16 bare `catch {}` sites
-  (`FsoInstaller.cs:236/256`, `InstallStateService.cs:152`, `GameLauncher.cs:161/172`, …) hide the
-  breadcrumb trail. Fix: add Serilog (file sink under `%LOCALAPPDATA%\OpenSO Launcher\logs\` with
-  rotation, include version/OS/runtime), and log inside every swallow-catch even when the UI stays quiet.
-  Effort: **M**. *This unblocks debugging every other item.*
+- [x] **Add real logging + crash reporting** — DONE 2026-07-07: hand-rolled zero-dependency
+  [`Services/Log.cs`](OpenSO.Launcher/Services/Log.cs) (chose this over Serilog to keep the
+  self-contained binary lean and match the codebase's no-deps ethos). Daily file under
+  `<AppData>/OpenSO Launcher/logs/`, 7-day pruning, session header (version/OS/runtime).
+  `Program.Main` installs `AppDomain.UnhandledException` + `TaskScheduler.UnobservedTaskException`
+  handlers and wraps the run in a fatal-logging try. The formerly-silent `catch {}` sites in the
+  installers, `InstallStateService`, `GameUpdateService`, `InstallOrchestrator`, and the MainViewModel
+  install/update/launch failures now log.
 
-- [ ] **Validate remote-feed URLs before use** — `SelfUpdateService.cs:78-95` and the JSON feeds in
-  `FsoInstaller.cs`, `GameUpdateService.cs`, `NewsService.cs` pull asset URLs from GitHub API JSON with
-  no format/domain check. Combined with the missing hash checks above, a tampered feed redirects the
-  download. Fix: require `https://` and an allowlisted host before downloading. Effort: **S**.
+- [x] **Validate remote-feed URLs before use** — DONE 2026-07-07: [`RemoteUrl.RequireHttps`](OpenSO.Launcher/Services/RemoteUrl.cs)
+  gates every feed-derived download (self-update asset, client zip, remesh zip, each game-update file)
+  to absolute HTTPS before it reaches `DownloadService`. Unit-tested. (Config-sourced TSO/Mono/SDL URLs
+  are intentionally not gated, so operators can self-host on an internal mirror.)
 
-- [ ] **Unpredictable temp filenames** — installers/self-update build temp paths from timestamp+GUID in a
-  shared temp dir. Prefer `Path.GetRandomFileName()` in an app-specific subfolder and restrictive perms
-  to avoid local-race tampering. Effort: **S**.
+- [x] **Unpredictable temp filenames** — DONE 2026-07-07: [`TempFiles.NewDir`](OpenSO.Launcher/Services/TempFiles.cs)
+  gives each install/update a random-named dir under an app-owned temp root (0700 on POSIX). All
+  installers + self-update use it. Unit-tested.
 
-- [ ] **Graceful shutdown for background work** — `Program.cs:19` calls `Environment.Exit()` which can
-  kill an in-flight `CabExtractor` (`Task.Run`) or download mid-write → corrupt install. Downloads also
-  may not abort promptly on cancel (`DownloadService.cs:76` read + long stall timeout). Fix: a shutdown
-  manager that cancels tokens and waits (bounded) for background tasks; add tighter socket-level timeouts.
-  Effort: **M**.
+- [x] **Graceful shutdown for background work** — DONE 2026-07-07: installs/updates now run under
+  `_shutdownCts.Token` (they were `ct=default`, i.e. uncancellable); `MainViewModel.Shutdown` cancels
+  and waits up to 3s for the in-flight op to unwind before `Program`'s `Environment.Exit`. Since FSO
+  now stages+swaps and TSO/RMS clean their temp dirs, an abrupt kill no longer guts a live install.
+  *Follow-up: tighter socket-level read timeouts in `DownloadService` (still relies on the 120s stall).*
 
-- [ ] **Robust version comparison** — `MainViewModel.cs:234-240` compares versions as normalized strings,
-  so `1.2.3` vs `1.2.3.0` reads as a mismatch → permanent "UPDATE GAME" nag. Fix: parse into `System.Version`
-  and compare numerically. Effort: **S**.
+- [x] **Robust version comparison** — DONE 2026-07-07: `MainViewModel.SameVersion` pads both versions to
+  four components and compares via `System.Version` (so `1.2.3` == `1.2.3.0` — note a naive `Version`
+  compare still fails this because unspecified revision is `-1`), with a string-equality fallback.
 
-- [ ] **Atomic staging for TSO and RMS installs** — `FsoInstaller` uses stage→verify→swap, but
-  `TsoInstaller` CAB-extracts directly into the live dir and `RmsInstaller` copies file-by-file with
-  `catch {}`. An interruption corrupts the live install. Fix: extract/copy into staging, verify, then
-  atomic move. Effort: **M** each.
+- [ ] **Atomic staging for TSO and RMS installs** — STILL OPEN. `FsoInstaller` uses stage→verify→swap, but
+  `TsoInstaller` CAB-extracts directly into the live dir and `RmsInstaller` copies file-by-file. An
+  interruption still corrupts the live install (graceful-shutdown cancellation reduces but doesn't
+  eliminate the window — an OS kill / power loss mid-extract still bisects the install). Deferred as its
+  own pass: it changes disk/perf characteristics (a second ~2 GB move for TSO) and needs real-install
+  verification, not just unit tests. Fix: extract/copy into staging, verify, then atomic move. Effort: **M** each.
 
 ## P3 — Architecture (schedule when touching these areas)
 

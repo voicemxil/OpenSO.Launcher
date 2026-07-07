@@ -31,6 +31,8 @@ internal static class Program
         await Test("DownloadService rejects a wrong SHA-256", TestSha256Mismatch);
         await Test("DownloadService accepts a correct SHA-256 (GitHub digest format)", TestSha256Match);
         Test("ElevationService.ShQuote defuses shell metacharacters", TestShQuote);
+        Test("RemoteUrl.RequireHttps allows https and rejects http/other schemes", TestRemoteUrl);
+        Test("TempFiles.NewDir returns a fresh, unique, existing directory", TestTempFiles);
         await Test("InstallStateService probes without throwing", TestInstallState);
         Test("Dependency graph resolves FSO deps for the current OS", TestDependencyGraph);
         Test("LauncherConfig points at OpenSO endpoints", TestConfig);
@@ -203,6 +205,33 @@ internal static class Program
             "embedded single quote is escaped, injection stays quoted");
         Assert(ElevationService.ShQuote("$(reboot) && `id`") == "'$(reboot) && `id`'",
             "command substitution and && are inert inside single quotes");
+    }
+
+    private static void TestTempFiles()
+    {
+        var a = TempFiles.NewDir("test");
+        var b = TempFiles.NewDir("test");
+        try
+        {
+            Assert(Directory.Exists(a), "created dir exists");
+            Assert(a != b, "two calls yield distinct dirs");
+            Assert(Path.GetFileName(a).StartsWith("test-"), "dir name carries the label");
+        }
+        finally { try { Directory.Delete(a, true); } catch { } try { Directory.Delete(b, true); } catch { } }
+    }
+
+    private static void TestRemoteUrl()
+    {
+        Assert(RemoteUrl.IsHttps("https://api.openso.org/x.zip"), "https is allowed");
+        Assert(!RemoteUrl.IsHttps("http://api.openso.org/x.zip"), "http is rejected");
+        Assert(!RemoteUrl.IsHttps("ftp://host/x.zip"), "ftp is rejected");
+        Assert(!RemoteUrl.IsHttps("file:///etc/passwd"), "file scheme is rejected");
+        Assert(!RemoteUrl.IsHttps(null), "null is rejected");
+        Assert(!RemoteUrl.IsHttps("not a url"), "garbage is rejected");
+        Assert(RemoteUrl.RequireHttps("https://ok/x", "x") == "https://ok/x", "RequireHttps returns the url when valid");
+        bool threw = false;
+        try { RemoteUrl.RequireHttps("http://evil/x", "the client"); } catch (InvalidOperationException) { threw = true; }
+        Assert(threw, "RequireHttps throws on a non-https url");
     }
 
     private static async Task TestInstallState()

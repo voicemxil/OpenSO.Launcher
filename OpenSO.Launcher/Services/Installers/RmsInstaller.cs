@@ -53,9 +53,9 @@ public sealed class RmsInstaller : IComponentInstaller
         var (zipUrl, zipSha256) = await ResolveRemeshZipUrlAsync(ct);
         if (zipUrl == null)
             throw new InvalidOperationException("No 3D mesh pack is available from the OpenSO server yet.");
+        RemoteUrl.RequireHttps(zipUrl, "the 3D mesh pack");
 
-        var work = Path.Combine(Path.GetTempPath(), $"openso-remesh-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-        Directory.CreateDirectory(work);
+        var work = TempFiles.NewDir("remesh");
         var tempZip = Path.Combine(work, "remesh.zip");
         var unzipDir = Path.Combine(work, "x");
         try
@@ -146,7 +146,7 @@ public sealed class RmsInstaller : IComponentInstaller
                     }
                 }
             }
-            catch { /* fall through to GitHub */ }
+            catch (Exception ex) { Log.Warn("Remesh ResourceCentral lookup failed; falling back to the GitHub release feed", ex); }
         }
 
         // GitHub client-release asset fallback (the asset's `digest` field is "sha256:<hex>" when present).
@@ -173,7 +173,7 @@ public sealed class RmsInstaller : IComponentInstaller
                 }
             }
         }
-        catch { /* no URL */ }
+        catch (Exception ex) { Log.Warn("GitHub remesh asset lookup failed; using the community mirror", ex); }
 
         // Last resort: the community mirror, so the feature works before operators re-host the package.
         // No published hash exists for it, so this path stays unverified (flagged in LAUNCHER_ROADMAP.md).
