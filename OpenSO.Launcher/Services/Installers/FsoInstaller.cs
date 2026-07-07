@@ -344,14 +344,5 @@ public sealed class FsoInstaller : IComponentInstaller
     }
 
     private static Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
-    {
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
-        if (url.StartsWith("https://api.github.com", StringComparison.OrdinalIgnoreCase))
-        {
-            var token = Environment.GetEnvironmentVariable("GITHUB_RATELIMIT_TOKEN");
-            if (!string.IsNullOrEmpty(token)) req.Headers.TryAddWithoutValidation("Authorization", $"token {token}");
-        }
-        return Http.SendAsync(req, ct);
-    }
+        => Http.SendAsync(HttpRequests.Get(url), ct);
 }

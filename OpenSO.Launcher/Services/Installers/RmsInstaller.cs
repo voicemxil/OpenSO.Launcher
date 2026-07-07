@@ -181,9 +181,5 @@ public sealed class RmsInstaller : IComponentInstaller
     }
 
     private static Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
-    {
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
-        return Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-    }
+        => Http.SendAsync(HttpRequests.Get(url), HttpCompletionOption.ResponseHeadersRead, ct);
 }

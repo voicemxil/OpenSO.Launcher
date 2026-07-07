@@ -16,6 +16,7 @@
     <Compile Include="..\OpenSO.Launcher\Models\ApiUpdate.cs" Link="src\ApiUpdate.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\IGameService.cs" Link="src\IGameService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\ProgressScaler.cs" Link="src\ProgressScaler.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\HttpRequests.cs" Link="src\HttpRequests.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\FileLocks.cs" Link="src\FileLocks.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Log.cs" Link="src\Log.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RemoteUrl.cs" Link="src\RemoteUrl.cs" />

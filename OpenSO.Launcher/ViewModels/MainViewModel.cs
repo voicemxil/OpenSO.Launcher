@@ -18,10 +18,10 @@ namespace OpenSO.Launcher.ViewModels;
 /// </summary>
 public partial class MainViewModel : ObservableObject
 {
-    private readonly LauncherConfig _config = new();
+    private readonly LauncherConfig _config;
     private readonly InstallStateService _installState;
     private readonly InstallOrchestrator _orchestrator;
-    private readonly GameLauncher _launcher = new();
+    private readonly GameLauncher _launcher;
     private readonly NewsService _news;
     private readonly SelfUpdateService _selfUpdate;
     private readonly StatusService _status;
@@ -130,13 +130,21 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";
 
-    public MainViewModel()
+    /// <summary>Design-time / fallback constructor — composes the default service graph itself. The real
+    /// app builds the graph in <see cref="App"/> (the composition root) and calls the injecting ctor.</summary>
+    public MainViewModel() : this(AppServices.CreateDefault()) { }
+
+    /// <summary>Injecting constructor — takes an already-wired service bundle (see <see cref="AppServices"/>),
+    /// so the wiring lives in one composition root and services can be substituted in tests.</summary>
+    public MainViewModel(AppServices services)
     {
-        _installState = new InstallStateService(_config);
-        _orchestrator = new InstallOrchestrator(_config, _installState);
-        _news = new NewsService(_config);
-        _selfUpdate = new SelfUpdateService(_config);
-        _status = new StatusService(_config);
+        _config = services.Config;
+        _installState = services.InstallState;
+        _orchestrator = services.Orchestrator;
+        _news = services.News;
+        _selfUpdate = services.SelfUpdate;
+        _status = services.Status;
+        _launcher = services.Launcher;
         _settings = LauncherSettings.Load();
         GraphicsMode = _settings.GraphicsMode; ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
         RefreshRate = _settings.RefreshRate; LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";

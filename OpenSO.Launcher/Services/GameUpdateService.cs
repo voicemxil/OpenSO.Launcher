@@ -117,8 +117,7 @@ public sealed class GameUpdateService
         try
         {
             var url = _config.ApiBaseUrl.TrimEnd('/') + "/userapi/update";
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
+            using var req = HttpRequests.Get(url);
             using var resp = await Http.SendAsync(req, ct);
             if (!resp.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<List<ApiUpdate>>(await resp.Content.ReadAsStringAsync(ct));

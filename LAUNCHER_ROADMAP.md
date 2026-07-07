@@ -124,17 +124,26 @@ half-swapped tree — a direct route to a corrupt install. Two sides:
 
 ## P3 — Architecture (schedule when touching these areas)
 
-- [ ] **Split the god-object ViewModel** — `MainViewModel.cs` (~443 lines, ~78 observable props, 3 loops)
-  drives every section. Fix: `HomeViewModel` / `InstallerViewModel` / `DownloadsViewModel` /
-  `SettingsViewModel` + a thin `ShellViewModel` for nav. Effort: **L**.
+- [ ] **Split the god-object ViewModel** — DEFERRED 2026-07-07, on purpose. The split
+  (`HomeViewModel`/`InstallerViewModel`/`DownloadsViewModel`/`SettingsViewModel` + a `ShellViewModel`) is
+  entangled here: `Busy`, `Section`, `Progress`, `PlayButtonText`, and the install state are cross-cutting,
+  the HOME page has two `x:CompileBindings="False"` islands (TopLots, NewsItems) and a `RelativeSource`
+  news-command binding — none of which are checked by compiled bindings. So a wrong rebind wouldn't fail
+  the build, it would fail *at runtime*, and there's no GUI harness here to catch it. Doing it blind is a
+  net risk. Recommended when someone can run the app: introduce a shared `LauncherState` the sub-VMs
+  observe, keep the DataContext as a `ShellViewModel` exposing `Home`/`Installer`/… sub-VMs, rebind
+  section by section, and click through install → play → settings after each. Effort: **L**.
 
-- [ ] **Introduce a DI container** — services are `new`'d inline in the VM ctor, blocking mock injection
-  in tests. Wire a container (built-in `ServiceCollection`, or Splat) in `App.axaml.cs`. Effort: **M**.
+- [x] **Introduce a composition root** — DONE 2026-07-07. Rather than a container library (overkill for one
+  window; cuts against the no-deps ethos), added [`AppServices`](OpenSO.Launcher/Services/AppServices.cs) —
+  the service graph is built in one place and injected into `MainViewModel(AppServices)` from `App`
+  (the composition root). A parameterless ctor delegates to `AppServices.CreateDefault()` for the designer,
+  and tests can pass a bundle with substituted services.
 
-- [ ] **De-duplicate shared helpers** — the `Scale()` progress-band helper is copy-pasted across
-  `FsoInstaller`, `TsoInstaller`, `RmsInstaller`, `GameUpdateService`; GitHub `HttpRequestMessage` setup
-  (User-Agent + token) is duplicated in `FsoInstaller`/`RmsInstaller`. Extract `ProgressScaler` and an
-  HTTP-request helper. Effort: **S**.
+- [x] **De-duplicate shared helpers** — DONE 2026-07-07: the six copy-pasted `Scale()` helpers are now one
+  [`ProgressScaler`](OpenSO.Launcher/Services/ProgressScaler.cs) (which also forwards the indeterminate
+  flag), and the duplicated GitHub request setup (User-Agent + rate-limit token) is one
+  [`HttpRequests.Get`](OpenSO.Launcher/Services/HttpRequests.cs) used by Fso/Rms/GameUpdate.
 
 ## P4 — Efficiency & UX polish
 
