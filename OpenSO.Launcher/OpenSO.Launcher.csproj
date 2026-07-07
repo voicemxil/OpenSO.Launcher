@@ -10,6 +10,10 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>OpenSO.Launcher</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- Pre-JIT to native on publish for faster cold startup (publish-only; no effect on local build/run).
+         Each release RID is built on its own OS (osx-x64 cross-compiles on the arm64 mac runner — same OS,
+         supported by crossgen2), so R2R holds across the matrix. Costs a few MB of publish size. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
     <!-- App icon (multi-res .ico from the branding folder) -->
     <ApplicationIcon>Assets/openso.ico</ApplicationIcon>
   </PropertyGroup>

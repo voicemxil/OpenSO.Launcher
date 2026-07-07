@@ -157,10 +157,15 @@ half-swapped tree — a direct route to a corrupt install. Two sides:
   — builds + runs the headless logic tests on push/PR across ubuntu/windows/macos (the platform matrix
   also covers the review's "cross-platform test run" item, since the registry probe, zip-slip
   case-sensitivity, and POSIX file-mode paths are OS-specific). `release.yml` left untouched.
-- [ ] **Enable ReadyToRun** — `<PublishReadyToRun>true</PublishReadyToRun>` for faster startup. **S**.
-- [ ] **Evaluate trimming** — `<PublishTrimmed>` could roughly halve the self-contained size (~80–120 MB →
-  ~40–60 MB); needs Avalonia reflection roots + per-platform testing. **M**.
-- [ ] **Track publish size in CI** — report + flag >10% growth per release. **S**.
+- [x] **Enable ReadyToRun** — DONE 2026-07-07: `<PublishReadyToRun>true</PublishReadyToRun>` in the csproj
+  (publish-only). Verified a win-x64 self-contained publish succeeds and R2R applies. Cross-RID holds
+  because each RID builds on its own OS (osx-x64 cross-compiles on the arm64 mac runner — same OS).
+- [ ] **Evaluate trimming** — EVALUATED, DEFERRED 2026-07-07. The self-contained publish is ~216 MB
+  uncompressed, so trimming is the real size lever — but Avalonia + CommunityToolkit rely on reflection,
+  so `<PublishTrimmed>` can break XAML bindings *at runtime* (not build time), and there's no GUI test
+  here to catch it. Needs trimmer roots + a manual run-through on each platform before it's safe. **M**.
+- [x] **Track publish size in CI** — DONE 2026-07-07: `release.yml` reports each RID zip's size to the job
+  step summary. (Auto-fail on >10% growth needs a stored baseline — left out for now.)
 - [x] **Cross-platform test run** — DONE 2026-07-07 as part of the CI workflow above (ubuntu/windows/macos matrix).
 
 ## Missing test coverage (add alongside the fixes above)
