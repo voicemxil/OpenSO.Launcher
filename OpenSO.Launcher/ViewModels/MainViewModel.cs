@@ -126,7 +126,6 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty] private string _graphicsMode = "OpenGL";
     [ObservableProperty] private string _threeDMode = "Disabled";
-    [ObservableProperty] private int _refreshRate = 60;
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";
 
@@ -147,7 +146,7 @@ public partial class MainViewModel : ObservableObject
         _launcher = services.Launcher;
         _settings = LauncherSettings.Load();
         GraphicsMode = _settings.GraphicsMode; ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
-        RefreshRate = _settings.RefreshRate; LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
+        LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
         ClosingBehavior = _settings.ClosingBehavior;
 
         StartClock();
@@ -178,7 +177,6 @@ public partial class MainViewModel : ObservableObject
         if (_settings.Enable3D && ClientInstalled && !RemeshInstalled && !Busy)
             Notify("3D mode is on. Install the 3D mesh pack (Installer tab) for higher-quality models.");
     }
-    partial void OnRefreshRateChanged(int value) { _settings.RefreshRate = value; _settings.Save(); }
     partial void OnLiveNotificationsChanged(string value) { _settings.LiveNotifications = value == "Enabled"; _settings.Save(); }
     partial void OnClosingBehaviorChanged(string value) { _settings.ClosingBehavior = value; _settings.Save(); }
 
@@ -486,7 +484,6 @@ public partial class MainViewModel : ObservableObject
     {
         GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
         Enable3D = ThreeDMode == "Enabled",
-        RefreshRate = RefreshRate,
         LanguageCode = 0,
         Windowed = true,
     };

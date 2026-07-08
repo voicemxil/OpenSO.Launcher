@@ -295,11 +295,6 @@
                   <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
                   <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
                 </StackPanel>
-                <StackPanel Spacing="5">
-                  <TextBlock Text="Refresh rate (Hz)" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
-                  <NumericUpDown Value="{Binding RefreshRate}" Minimum="30" Maximum="360" Increment="1" FormatString="0"/>
-                  <TextBlock Classes="sub" Text="Higher refresh rates give smoother motion (the render rate is decoupled from the sim)."/>
-                </StackPanel>
               </StackPanel>
             </Border>
 

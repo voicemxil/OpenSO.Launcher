@@ -21,8 +21,6 @@ public sealed class GameLauncher
         /// <summary>"ogl" (OpenGL), "dx" (DirectX, Windows only), or "sw" (software).</summary>
         public string GraphicsMode { get; set; } = "ogl";
         public bool Enable3D { get; set; } = false;
-        /// <summary>Refresh-rate hint passed as -hz. 0 = let the game decide.</summary>
-        public int RefreshRate { get; set; } = 60;
         /// <summary>Game language code (0 = English), passed as -lang.</summary>
         public int LanguageCode { get; set; } = 0;
         public bool Windowed { get; set; } = true;
@@ -93,7 +91,7 @@ public sealed class GameLauncher
         args.Add($"-{gfx}");
 
         if (o.Enable3D && o.GraphicsMode != "sw") args.Add("-3d");
-        if (o.RefreshRate > 0) args.Add($"-hz{o.RefreshRate}");
+        // Refresh rate is left to the game + monitor now — the launcher no longer passes -hz.
         return args;
     }
 
