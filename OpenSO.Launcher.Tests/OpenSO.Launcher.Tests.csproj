@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>OpenSO.Launcher.Tests</AssemblyName>
@@ -37,10 +37,6 @@
     <Compile Include="..\OpenSO.Launcher\Services\Installers\MonoInstaller.cs" Link="src\MonoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\SdlInstaller.cs" Link="src\SdlInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\RmsInstaller.cs" Link="src\RmsInstaller.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
 </Project>
