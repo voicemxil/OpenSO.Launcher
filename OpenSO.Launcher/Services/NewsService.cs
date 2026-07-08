@@ -20,23 +20,29 @@ public record NewsItem(string Slug, string Title, string Date, string? Summary, 
 public sealed class NewsService
 {
     private readonly LauncherConfig _config;
-    private readonly HttpClient _http;
+    // Static: per-instance HttpClients are never disposed and leak socket handles (see StatusService).
+    private static readonly HttpClient Http = CreateClient();
 
-    public NewsService(LauncherConfig config)
+    public NewsService(LauncherConfig config) => _config = config;
+
+    private static HttpClient CreateClient()
     {
-        _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        return c;
     }
 
     private string Site => _config.WebsiteUrl.TrimEnd('/');
+
+    private static string CachePath => System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenSO Launcher", "news-cache.json");
 
     public async Task<IReadOnlyList<NewsItem>> GetLatestAsync(int max = 4, CancellationToken ct = default)
     {
         var items = new List<NewsItem>();
         try
         {
-            var json = await _http.GetStringAsync($"{Site}/news/feed.json", ct);
+            var json = await Http.GetStringAsync($"{Site}/news/feed.json", ct);
             using var doc = JsonDocument.Parse(json);
             // feed.json is { "posts": [ {slug,title,date,author,summary,tags,image} ] }; tolerate a bare array too.
             var root = doc.RootElement;
@@ -55,9 +61,39 @@ public sealed class NewsService
                     items.Add(new NewsItem(slug!, title!, Str(e, "date") ?? "", Str(e, "summary"), img));
                 }
             }
+            if (items.Count > 0) SaveCache(items);
+            return items;
         }
-        catch { /* offline / feed unavailable -> empty; launcher still works */ }
-        return items;
+        catch (Exception ex)
+        {
+            // Offline / transient failure: show the last good feed instead of blanking the panel.
+            Log.Warn("News feed fetch failed; using the cached feed", ex);
+            return LoadCache(max);
+        }
+    }
+
+    private static void SaveCache(List<NewsItem> items)
+    {
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CachePath)!);
+            System.IO.File.WriteAllText(CachePath, JsonSerializer.Serialize(items));
+        }
+        catch { /* non-fatal */ }
+    }
+
+    private static List<NewsItem> LoadCache(int max)
+    {
+        try
+        {
+            if (System.IO.File.Exists(CachePath))
+            {
+                var cached = JsonSerializer.Deserialize<List<NewsItem>>(System.IO.File.ReadAllText(CachePath));
+                if (cached != null) return cached.Count > max ? cached.GetRange(0, max) : cached;
+            }
+        }
+        catch { /* corrupt cache -> empty */ }
+        return new List<NewsItem>();
     }
 
     public void OpenPost(string slug) => OpenUrl($"{Site}/post.html?p={Uri.EscapeDataString(slug)}");

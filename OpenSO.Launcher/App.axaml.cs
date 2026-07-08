@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using OpenSO.Launcher.Services;
 using OpenSO.Launcher.ViewModels;
 using OpenSO.Launcher.Views;
 
@@ -19,7 +20,8 @@ public partial class App : Application
             // default, which would keep the process alive if any secondary window ever exists.
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
 
-            var vm = new MainViewModel();
+            // Composition root: build the service graph here (not inside the view-model) and inject it.
+            var vm = new MainViewModel(AppServices.CreateDefault());
             desktop.MainWindow = new MainWindow { DataContext = vm };
 
             // Stop the VM's polling loops (clock tick, server-status poll) when the app shuts

@@ -22,13 +22,16 @@ namespace OpenSO.Launcher.Services;
 public sealed class SelfUpdateService : ISelfUpdateService
 {
     private readonly LauncherConfig _config;
-    private readonly HttpClient _http;
+    // Static: per-instance HttpClients are never disposed and leak socket handles (see StatusService).
+    private static readonly HttpClient Http = CreateClient();
 
-    public SelfUpdateService(LauncherConfig config)
+    public SelfUpdateService(LauncherConfig config) => _config = config;
+
+    private static HttpClient CreateClient()
     {
-        _config = config;
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        c.DefaultRequestHeaders.UserAgent.ParseAdd("OpenSO.Launcher");
+        return c;
     }
 
     /// <summary>This launcher's version, from the assembly (e.g. "0.1.0").</summary>
@@ -40,24 +43,26 @@ public sealed class SelfUpdateService : ISelfUpdateService
 
     public async Task<string?> CheckForLauncherUpdateAsync(CancellationToken ct = default)
     {
-        var (tag, _) = await ResolveLatestAsync(ct);
+        var (tag, _, _) = await ResolveLatestAsync(ct);
         return tag != null && IsNewer(tag, CurrentVersion()) ? tag : null;
     }
 
     public async Task ApplyLauncherUpdateAsync(IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
-        var (tag, assetUrl) = await ResolveLatestAsync(ct);
+        var (tag, assetUrl, assetSha256) = await ResolveLatestAsync(ct);
         if (tag == null || assetUrl == null)
             throw new InvalidOperationException("No launcher update asset is available for this platform.");
+        RemoteUrl.RequireHttps(assetUrl, "the launcher update");
 
         var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-        var staging = Path.Combine(Path.GetTempPath(), "openso-launcher-update-" + Guid.NewGuid().ToString("N"));
-        Directory.CreateDirectory(staging);
+        var staging = TempFiles.NewDir("launcher-update");
         var tmpZip = Path.Combine(staging, "launcher.zip");
         var newDir = Path.Combine(staging, "new");
 
         progress.Report(new ProgressReport("Updating launcher", 0.0, "Downloading " + tag + "…"));
-        await new DownloadService(assetUrl, tmpZip).RunAsync(progress, ct);
+        // assetSha256 is GitHub's release-asset digest; verifying it stops a MITM'd or corrupted
+        // download from ever being swapped in over the running launcher.
+        await new DownloadService(assetUrl, tmpZip, expectedSha256: assetSha256).RunAsync(progress, ct);
         progress.Report(new ProgressReport("Updating launcher", 0.85, "Extracting…"));
         await ZipExtractor.ExtractAsync(tmpZip, newDir, new Progress<ProgressReport>(),
             preservePermissions: !OperatingSystem.IsWindows(), ct);
@@ -67,34 +72,36 @@ public sealed class SelfUpdateService : ISelfUpdateService
         // The caller must shut the launcher down now so the swap script can replace the no-longer-running files.
     }
 
-    /// <summary>Fetch releases/latest; return (tagName-without-leading-v, assetUrlForThisRid) — either may be null.</summary>
-    private async Task<(string? tag, string? assetUrl)> ResolveLatestAsync(CancellationToken ct)
+    /// <summary>Fetch releases/latest; return (tagName-without-leading-v, assetUrlForThisRid, assetSha256) — any may be null.
+    /// The sha256 comes from the GitHub asset's <c>digest</c> field ("sha256:&lt;hex&gt;") when present.</summary>
+    private async Task<(string? tag, string? assetUrl, string? assetSha256)> ResolveLatestAsync(CancellationToken ct)
     {
         try
         {
-            var json = await _http.GetStringAsync(_config.LauncherUpdateFeed, ct);
+            var json = await Http.GetStringAsync(_config.LauncherUpdateFeed, ct);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             string? tag = root.TryGetProperty("tag_name", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() : null;
-            string? assetUrl = null;
+            string? assetUrl = null, assetSha256 = null;
             if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
                 var rid = CurrentRid();
-                string? generic = null;
+                string? generic = null, genericDigest = null;
                 foreach (var a in assets.EnumerateArray())
                 {
                     var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
                     if (name == null || !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
                     if (!a.TryGetProperty("browser_download_url", out var u)) continue;
                     var url = u.GetString();
-                    if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) { assetUrl = url; break; } // exact platform
-                    generic ??= url; // fall back to the first .zip asset
+                    var digest = a.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+                    if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) { assetUrl = url; assetSha256 = digest; break; } // exact platform
+                    if (generic == null) { generic = url; genericDigest = digest; } // fall back to the first .zip asset
                 }
-                assetUrl ??= generic;
+                if (assetUrl == null) { assetUrl = generic; assetSha256 = genericDigest; }
             }
-            return (tag?.TrimStart('v', 'V'), assetUrl);
+            return (tag?.TrimStart('v', 'V'), assetUrl, assetSha256);
         }
-        catch { return (null, null); }
+        catch { return (null, null, null); }
     }
 
     /// <summary>This machine's release RID — matches launcher asset suffixes (win-x64, osx-arm64, …).</summary>

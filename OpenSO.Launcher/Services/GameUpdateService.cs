@@ -44,6 +44,10 @@ public sealed class GameUpdateService
         if (!OperatingSystem.IsWindows()) return false;
         var patcherExe = Path.Combine(installDir, "update.exe");
         if (!File.Exists(patcherExe)) return false;
+        // Defense in depth: never stage/run the patcher against a live game (the UI guards this too).
+        // The patcher would overwrite locked exe/DLLs and leave a half-applied, corrupt install.
+        if (GameProcessGuard.IsGameRunning(installDir))
+            throw new InvalidOperationException("OpenSO is still running — close the game before updating.");
         // Without a known installed version there's no chain start — an old pre-version.txt install.
         if (string.IsNullOrWhiteSpace(installedVersion)) return false;
 
@@ -72,17 +76,21 @@ public sealed class GameUpdateService
             for (int i = 0; i < downloads.Count; i++)
             {
                 var (url, name) = downloads[i];
+                RemoteUrl.RequireHttps(url, $"update file {name}");
                 double lo = 0.85 * i / downloads.Count, hi = 0.85 * (i + 1) / downloads.Count;
                 progress.Report(new ProgressReport("update", lo, $"Downloading {name}…"));
                 var dl = new DownloadService(url, Path.Combine(patchDir, name));
-                await dl.RunAsync(Scale(progress, "update", lo, hi, $"Downloading {name}… "), ct);
+                await dl.RunAsync(ProgressScaler.Scale(progress, "update", lo, hi, $"Downloading {name}… "), ct);
             }
         }
-        catch
+        catch (Exception ex)
         {
             // A half-staged PatchFiles dir would be picked up (and applied!) by the next patcher
             // run, in-client or otherwise — remove it, then let the caller fall back / report.
-            TryDeleteDir(patchDir);
+            // Retried: a transiently-locked file here (AV scan, lagging handle) would otherwise
+            // leave the stale dir behind for the next patcher run to corrupt the install with.
+            Log.Warn("Staging the incremental update failed; cleaning PatchFiles and falling back", ex);
+            TryDeleteDirWithRetry(patchDir);
             throw;
         }
 
@@ -109,13 +117,12 @@ public sealed class GameUpdateService
         try
         {
             var url = _config.ApiBaseUrl.TrimEnd('/') + "/userapi/update";
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
+            using var req = HttpRequests.Get(url);
             using var resp = await Http.SendAsync(req, ct);
             if (!resp.IsSuccessStatusCode) return null;
             return JsonSerializer.Deserialize<List<ApiUpdate>>(await resp.Content.ReadAsStringAsync(ct));
         }
-        catch { return null; }
+        catch (Exception ex) { Log.Warn("Update feed unavailable; the game-update path will fall back to a full reinstall", ex); return null; }
     }
 
     /// <summary>
@@ -140,10 +147,29 @@ public sealed class GameUpdateService
 
     private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
 
-    /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
+    private static void TryDeleteDirWithRetry(string path)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            try { if (!Directory.Exists(path)) return; Directory.Delete(path, true); return; }
+            catch { Thread.Sleep(500 * (attempt + 1)); }
+        }
+        TryDeleteDir(path); // last best-effort attempt
+    }
+
+    /// <summary>
+    /// Startup sweep: removes a leftover &lt;install&gt;/PatchFiles dir. One only exists when a previous
+    /// patch run failed AND its cleanup couldn't delete it (locked files) — the patcher would happily
+    /// apply that stale/partial chain on its next run and corrupt the install. Safe to call any time
+    /// the patcher isn't running; TryPatchUpdateAsync re-stages a fresh dir for every update anyway.
+    /// </summary>
+    public static void SweepStalePatchFiles(string installDir)
+    {
+        try
+        {
+            var patchDir = Path.Combine(installDir, "PatchFiles");
+            if (Directory.Exists(patchDir)) TryDeleteDirWithRetry(patchDir);
+        }
+        catch { /* best effort */ }
+    }
 }

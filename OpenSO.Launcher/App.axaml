@@ -64,6 +64,8 @@
       <!-- The themed navy backdrop (the old app background), reused behind the update prompt. -->
       <SolidColorBrush x:Key="UpdateBg"  Color="#0E2138"/>
       <SolidColorBrush x:Key="UpdateInk" Color="#E6F0F4"/>
+      <!-- Error banner tint: translucent red so it reads on both light and dark cards (border/headline use Bad). -->
+      <SolidColorBrush x:Key="ErrBg" Color="#FF453A" Opacity="0.13"/>
     </ResourceDictionary>
   </Application.Resources>
 </Application>

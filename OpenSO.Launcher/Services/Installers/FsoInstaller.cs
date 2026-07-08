@@ -39,16 +39,30 @@ public sealed class FsoInstaller : IComponentInstaller
 
     public async Task InstallAsync(string installPath, IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
+        // Pre-flight: the install peaks at zip (temp) + staged extract + old-install backup coexisting.
+        // Fail up front with a clear message instead of a cryptic mid-extract I/O error on a full disk.
+        EnsureFreeSpace(installPath);
+        EnsureFreeSpace(Path.GetTempPath());
+
+        // A reinstall/update swaps the whole install dir aside; if the game is running from it the swap
+        // fails on Windows (locked dir) and leaves a confusing error. Refuse up front with a clear one.
+        if (Directory.Exists(installPath) && GameProcessGuard.IsGameRunning(installPath))
+            throw new InvalidOperationException("OpenSO is still running — close the game before reinstalling/updating it.");
+
         // Step 1: resolve the zip URL.
         progress.Report(new ProgressReport("client", 0, "Locating the latest client…"));
-        var zipUrl = await ResolveClientZipUrlAsync(ct)
-            ?? throw new InvalidOperationException("Could not obtain OpenSO client release information.");
+        var (zipUrl, zipSha256) = await ResolveClientZipUrlAsync(ct);
+        if (zipUrl == null)
+            throw new InvalidOperationException("Could not obtain OpenSO client release information.");
+        RemoteUrl.RequireHttps(zipUrl, "the OpenSO client");
 
-        // Step 2: download.
+        // Step 2: download. zipSha256 is GitHub's release-asset digest when the release feed supplied
+        // one — verifying it stops a tampered/corrupted client zip before it ever reaches staging.
         var stamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var tempZip = Path.Combine(Path.GetTempPath(), $"openso-client-{stamp}.zip");
-        var dl = new DownloadService(zipUrl, tempZip);
-        await dl.RunAsync(Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
+        var tempDir = TempFiles.NewDir("client");
+        var tempZip = Path.Combine(tempDir, "client.zip");
+        var dl = new DownloadService(zipUrl, tempZip, expectedSha256: zipSha256);
+        await dl.RunAsync(ProgressScaler.Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
 
         // ATOMIC UPDATE. Never extract directly into the live install dir: an interrupted extract (network
         // drop, I/O error, cancellation, crash) would leave it half-gutted with the self-contained .NET
@@ -68,7 +82,7 @@ public sealed class FsoInstaller : IComponentInstaller
             // (and OpenSO.app's executable) keep their +x bit — otherwise the game can't launch.
             TryDeleteDir(staging);
             await ZipExtractor.ExtractAsync(tempZip, staging,
-                Scale(progress, "client", 0.70, 0.90, "Extracting client files… "), preservePermissions: true, ct);
+                ProgressScaler.Scale(progress, "client", 0.70, 0.90, "Extracting client files… "), preservePermissions: true, ct);
 
             // Step 4b: verify the staged client is COMPLETE before we touch the live install. This is the
             // guard against shipping/keeping a truncated extract (the exact failure that gutted the runtime).
@@ -106,8 +120,8 @@ public sealed class FsoInstaller : IComponentInstaller
         }
         finally
         {
-            TryDelete(tempZip);   // matches fso.js end() -> dl.cleanup()
-            TryDeleteDir(backup); // on success this is the old install; on a restored failure it's already gone
+            TryDeleteDir(tempDir); // the downloaded zip + its temp dir (fso.js end() -> dl.cleanup())
+            TryDeleteDir(backup);  // on success this is the old install; on a restored failure it's already gone
         }
     }
 
@@ -212,14 +226,34 @@ public sealed class FsoInstaller : IComponentInstaller
 
     private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
 
+    // Peak usage: the ~350 MB client zip (temp) + the ~800 MB staged extract + the old install held
+    // as a backup during the swap. 1.5 GB gives that headroom (same pattern as TsoInstaller).
+    private const long MinFreeBytes = 1536L * 1024 * 1024;
+
+    private static void EnsureFreeSpace(string path)
+    {
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (string.IsNullOrEmpty(root)) return;
+            var di = new DriveInfo(root);
+            if (di.IsReady && di.AvailableFreeSpace < MinFreeBytes)
+                throw new IOException(
+                    $"Not enough free disk space to install the OpenSO client: about {MinFreeBytes >> 20} MB is needed, " +
+                    $"but only {di.AvailableFreeSpace >> 20} MB is free on {root}. Free up space and try again.");
+        }
+        catch (IOException) { throw; }
+        catch { /* DriveInfo unavailable for this path — skip the pre-flight check rather than block. */ }
+    }
+
     /// <summary>
     /// Port of fso.js getZipUrl(): try the OpenSO API release feed first (expects an array with a
     /// `full_zip`), then fall back to the GitHub releases API, picking the asset whose name contains
     /// "client". Repointed at OpenSO endpoints via LauncherConfig.
     /// </summary>
-    private async Task<string?> ResolveClientZipUrlAsync(CancellationToken ct)
+    private async Task<(string? url, string? sha256)> ResolveClientZipUrlAsync(CancellationToken ct)
     {
-        // 1) OpenSO API (array of releases, [0].full_zip)
+        // 1) OpenSO API (array of releases, [0].full_zip; optional [0].full_zip_sha256 for verification)
         try
         {
             using var apiResp = await GetAsync(_config.ClientManifestUrl, ct);
@@ -231,10 +265,14 @@ public sealed class FsoInstaller : IComponentInstaller
                     ? root[0] : root;
                 if (first.ValueKind == JsonValueKind.Object &&
                     first.TryGetProperty("full_zip", out var fz) && fz.ValueKind == JsonValueKind.String)
-                    return fz.GetString();
+                {
+                    string? sha = first.TryGetProperty("full_zip_sha256", out var fs) && fs.ValueKind == JsonValueKind.String
+                        ? fs.GetString() : null;
+                    return (fz.GetString(), sha);
+                }
             }
         }
-        catch { /* fall through to GitHub */ }
+        catch (Exception ex) { Log.Warn("Client manifest lookup failed; falling back to the GitHub release feed", ex); }
 
         // 2) GitHub releases fallback. See PickFullClientAsset for the selection rules (per-platform +
         //    must be the FULL client zip, not the incremental delta / manifest).
@@ -245,17 +283,18 @@ public sealed class FsoInstaller : IComponentInstaller
             using var doc = JsonDocument.Parse(await ghResp.Content.ReadAsStringAsync(ct));
             if (doc.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
-                var list = new List<(string? name, string? url)>();
+                var list = new List<(string? name, string? url, string? digest)>();
                 foreach (var asset in assets.EnumerateArray())
                     list.Add((asset.TryGetProperty("name", out var n) ? n.GetString() : null,
-                              asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null));
+                              asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null,
+                              asset.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null));
                 var picked = PickFullClientAsset(list, CurrentRid());
-                if (picked != null) return picked;
+                if (picked.url != null) return picked;
             }
         }
-        catch { /* no URL */ }
+        catch (Exception ex) { Log.Warn("GitHub client release lookup failed; no client URL resolved", ex); }
 
-        return null;
+        return (null, null);
     }
 
     /// <summary>
@@ -269,16 +308,19 @@ public sealed class FsoInstaller : IComponentInstaller
     /// contains client+rid" logic happened to work.)
     /// </summary>
     internal static string? PickFullClientAsset(IEnumerable<(string? name, string? url)> assets, string rid)
+        => PickFullClientAsset(assets.Select(a => (a.name, a.url, (string?)null)), rid).url;
+
+    internal static (string? url, string? sha256) PickFullClientAsset(IEnumerable<(string? name, string? url, string? digest)> assets, string rid)
     {
-        string? generic = null;
-        foreach (var (name, url) in assets)
+        (string? url, string? sha256) generic = (null, null);
+        foreach (var (name, url, digest) in assets)
         {
             if (name == null || url == null) continue;
             if (!name.Contains("client", StringComparison.OrdinalIgnoreCase)) continue;
             if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;       // excludes .manifest.json
             if (name.Contains("incremental", StringComparison.OrdinalIgnoreCase)) continue; // excludes the delta zip
-            if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return url;         // exact platform match
-            generic ??= url;                                                                // any full client zip
+            if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return (url, digest); // exact platform match
+            if (generic.url == null) generic = (url, digest);                               // any full client zip
         }
         return generic;
     }
@@ -302,23 +344,5 @@ public sealed class FsoInstaller : IComponentInstaller
     }
 
     private static Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
-    {
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
-        if (url.StartsWith("https://api.github.com", StringComparison.OrdinalIgnoreCase))
-        {
-            var token = Environment.GetEnvironmentVariable("GITHUB_RATELIMIT_TOKEN");
-            if (!string.IsNullOrEmpty(token)) req.Headers.TryAddWithoutValidation("Authorization", $"token {token}");
-        }
-        return Http.SendAsync(req, ct);
-    }
-
-    private static void TryDelete(string path) { try { if (File.Exists(path)) File.Delete(path); } catch { } }
-
-    /// <summary>Maps a child operation's 0..1 progress into a [lo,hi] band of the overall stage.</summary>
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
+        => Http.SendAsync(HttpRequests.Get(url), ct);
 }

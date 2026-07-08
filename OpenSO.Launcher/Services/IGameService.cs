@@ -4,8 +4,10 @@ using System.Threading.Tasks;
 
 namespace OpenSO.Launcher.Services;
 
-/// <summary>Progress report for any long-running launcher operation.</summary>
-public record ProgressReport(string Stage, double Fraction, string? Detail = null);
+/// <summary>Progress report for any long-running launcher operation. <see cref="IsIndeterminate"/> is set
+/// when the total size is unknown (e.g. a download with no Content-Length) so the UI can show a pulsing bar
+/// instead of a stuck 0%.</summary>
+public record ProgressReport(string Stage, double Fraction, string? Detail = null, bool IsIndeterminate = false);
 
 /// <summary>
 /// The cross-platform launcher "engine". The implementation ports the reusable logic from the

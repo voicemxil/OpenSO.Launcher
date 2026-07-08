@@ -3,13 +3,18 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <!-- Cross-platform: no -windows suffix. Avalonia runs on Win/macOS/Linux. -->
-    <TargetFramework>net9.0</TargetFramework>
+    <!-- .NET 10 (LTS) — matches the OpenSO game client + patcher. -->
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>OpenSO.Launcher</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- Pre-JIT to native on publish for faster cold startup (publish-only; no effect on local build/run).
+         Each release RID is built on its own OS (osx-x64 cross-compiles on the arm64 mac runner — same OS,
+         supported by crossgen2), so R2R holds across the matrix. Costs a few MB of publish size. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
     <!-- App icon (multi-res .ico from the branding folder) -->
     <ApplicationIcon>Assets/openso.ico</ApplicationIcon>
   </PropertyGroup>
@@ -32,8 +37,8 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
     <!-- Async URL->image loading for lot thumbnails (Avalonia can't bind remote URLs natively) -->
     <PackageReference Include="AsyncImageLoader.Avalonia" Version="3.*" />
-    <!-- Registry access (no-op on non-Windows; needed so InstallStateService compiles cross-platform) -->
-    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
+    <!-- Registry access: provided by the .NET 10 framework (Microsoft.Win32.Registry), so no package
+         reference is needed — InstallStateService still guards every call with OperatingSystem.IsWindows(). -->
   </ItemGroup>
 
 </Project>

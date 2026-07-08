@@ -149,6 +149,6 @@ public sealed class InstallStateService
             if (string.IsNullOrEmpty(valueName)) return subKey;
             return key.GetValue(valueName) as string;
         }
-        catch { return null; }
+        catch (Exception ex) { Log.Warn($"Registry read of {subKey}\\{valueName} failed; using the install marker instead", ex); return null; }
     }
 }

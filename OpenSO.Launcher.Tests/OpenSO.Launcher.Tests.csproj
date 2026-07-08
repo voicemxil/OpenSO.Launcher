@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>OpenSO.Launcher.Tests</AssemblyName>
@@ -15,6 +15,12 @@
     <Compile Include="..\OpenSO.Launcher\Models\Components.cs" Link="src\Components.cs" />
     <Compile Include="..\OpenSO.Launcher\Models\ApiUpdate.cs" Link="src\ApiUpdate.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\IGameService.cs" Link="src\IGameService.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\ProgressScaler.cs" Link="src\ProgressScaler.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\HttpRequests.cs" Link="src\HttpRequests.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\FileLocks.cs" Link="src\FileLocks.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Log.cs" Link="src\Log.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\RemoteUrl.cs" Link="src\RemoteUrl.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\TempFiles.cs" Link="src\TempFiles.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\DownloadService.cs" Link="src\DownloadService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\InstallStateService.cs" Link="src\InstallStateService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\InstallOrchestrator.cs" Link="src\InstallOrchestrator.cs" />
@@ -22,6 +28,7 @@
     <Compile Include="..\OpenSO.Launcher\Services\Extraction\CabExtractor.cs" Link="src\CabExtractor.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\ElevationService.cs" Link="src\ElevationService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\GameLauncher.cs" Link="src\GameLauncher.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\GameProcessGuard.cs" Link="src\GameProcessGuard.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\GameUpdateService.cs" Link="src\GameUpdateService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />
@@ -30,10 +37,6 @@
     <Compile Include="..\OpenSO.Launcher\Services\Installers\MonoInstaller.cs" Link="src\MonoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\SdlInstaller.cs" Link="src\SdlInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\RmsInstaller.cs" Link="src\RmsInstaller.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Microsoft.Win32.Registry" Version="5.0.0" />
   </ItemGroup>
 
 </Project>

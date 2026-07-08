@@ -38,18 +38,18 @@ public sealed class MonoInstaller : IComponentInstaller
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
             // Download the .pkg, then install it system-wide with elevation.
-            var pkg = Path.Combine(Path.GetTempPath(), $"openso-mono-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.pkg");
+            var work = TempFiles.NewDir("mono");
+            var pkg = Path.Combine(work, "mono.pkg");
             var url = _config.ResourceCentral.TryGetValue("Mono", out var u) ? u
                 : throw new InvalidOperationException("No Mono download URL configured.");
 
             progress.Report(new ProgressReport("mono", 0, "Downloading Mono runtime…"));
-            await new DownloadService(url, pkg).RunAsync(Scale(progress, "mono", 0.0, 0.85), ct);
+            await new DownloadService(url, pkg).RunAsync(ProgressScaler.Scale(progress, "mono", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("mono", 0.9, "Installing Mono (you may be asked for your password)…"));
-            var escaped = pkg.Replace(" ", "\\ ");
-            var res = await _elevation.RunAsync($"installer -pkg {escaped} -target /",
+            var res = await _elevation.RunAsync($"installer -pkg {ElevationService.ShQuote(pkg)} -target /",
                 "OpenSO needs to install the Mono runtime", ct);
-            try { File.Delete(pkg); } catch { }
+            try { Directory.Delete(work, true); } catch { }
 
             if (!res.Success) throw new IOException("Mono install failed: " + res.StdErr);
             progress.Report(new ProgressReport("mono", 1.0, "Mono installed."));
@@ -76,7 +76,4 @@ public sealed class MonoInstaller : IComponentInstaller
         }
         catch { return false; }
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage, double lo, double hi) =>
-        new Progress<ProgressReport>(r => outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction, r.Detail)));
 }

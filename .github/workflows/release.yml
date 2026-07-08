@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "10.0.x"
 
       - name: Resolve version
         id: ver
@@ -154,6 +154,16 @@ jobs:
           choco install innosetup --no-progress -y --limit-output
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           & $iscc "/DAppVersion=${{ steps.ver.outputs.num }}" "/DPublishDir=$PWD\publish" "OpenSO.Launcher\installer\windows.iss"
+
+      - name: Report artifact size
+        shell: bash
+        run: |
+          for f in OpenSO.Launcher-*.zip; do
+            [ -e "$f" ] || continue
+            SZ=$(du -h "$f" | cut -f1)
+            echo "$f = $SZ"
+            echo "- \`$f\` — **$SZ**" >> "$GITHUB_STEP_SUMMARY"
+          done
 
       - uses: actions/upload-artifact@v4
         with:

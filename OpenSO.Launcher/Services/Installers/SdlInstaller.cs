@@ -38,23 +38,23 @@ public sealed class SdlInstaller : IComponentInstaller
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            var dmg = Path.Combine(Path.GetTempPath(), $"openso-sdl-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}.dmg");
+            var work = TempFiles.NewDir("sdl");
+            var dmg = Path.Combine(work, "sdl.dmg");
             var url = _config.ResourceCentral.TryGetValue("SDL", out var u) ? u
                 : throw new InvalidOperationException("No SDL download URL configured.");
 
             progress.Report(new ProgressReport("sdl", 0, "Downloading SDL2…"));
-            await new DownloadService(url, dmg).RunAsync(Scale(progress, "sdl", 0.0, 0.85), ct);
+            await new DownloadService(url, dmg).RunAsync(ProgressScaler.Scale(progress, "sdl", 0.0, 0.85), ct);
 
             progress.Report(new ProgressReport("sdl", 0.9, "Installing SDL2 (you may be asked for your password)…"));
-            var escaped = dmg.Replace(" ", "\\ ");
             // Mount → remove any existing framework → copy in → unmount (matches sdl.js).
             var cmd =
-                $"hdiutil attach {escaped} && " +
+                $"hdiutil attach {ElevationService.ShQuote(dmg)} && " +
                 "rm -rf /Library/Frameworks/SDL2.framework && " +
                 "cp -R /Volumes/SDL2/SDL2.framework /Library/Frameworks && " +
                 "hdiutil unmount /Volumes/SDL2";
             var res = await _elevation.RunAsync(cmd, "OpenSO needs to install SDL2", ct);
-            try { File.Delete(dmg); } catch { }
+            try { Directory.Delete(work, true); } catch { }
 
             if (!res.Success) throw new IOException("SDL2 install failed: " + res.StdErr);
             progress.Report(new ProgressReport("sdl", 1.0, "SDL2 installed."));
@@ -81,7 +81,4 @@ public sealed class SdlInstaller : IComponentInstaller
         }
         catch { return false; }
     }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage, double lo, double hi) =>
-        new Progress<ProgressReport>(r => outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction, r.Detail)));
 }

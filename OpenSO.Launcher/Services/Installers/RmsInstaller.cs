@@ -50,20 +50,21 @@ public sealed class RmsInstaller : IComponentInstaller
         var meshReplace = Path.Combine(fso.Path, "Content", "MeshReplace");
 
         progress.Report(new ProgressReport("rms", 0, "Locating the 3D mesh pack…"));
-        var zipUrl = await ResolveRemeshZipUrlAsync(ct)
-            ?? throw new InvalidOperationException("No 3D mesh pack is available from the OpenSO server yet.");
+        var (zipUrl, zipSha256) = await ResolveRemeshZipUrlAsync(ct);
+        if (zipUrl == null)
+            throw new InvalidOperationException("No 3D mesh pack is available from the OpenSO server yet.");
+        RemoteUrl.RequireHttps(zipUrl, "the 3D mesh pack");
 
-        var work = Path.Combine(Path.GetTempPath(), $"openso-remesh-{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}");
-        Directory.CreateDirectory(work);
+        var work = TempFiles.NewDir("remesh");
         var tempZip = Path.Combine(work, "remesh.zip");
         var unzipDir = Path.Combine(work, "x");
         try
         {
-            var dl = new DownloadService(zipUrl, tempZip);
-            await dl.RunAsync(Scale(progress, "rms", 0.00, 0.80, "Downloading 3D meshes… "), ct);
+            var dl = new DownloadService(zipUrl, tempZip, expectedSha256: zipSha256);
+            await dl.RunAsync(ProgressScaler.Scale(progress, "rms", 0.00, 0.80, "Downloading 3D meshes… "), ct);
 
             await ZipExtractor.ExtractAsync(tempZip, unzipDir,
-                Scale(progress, "rms", 0.80, 0.92, "Unpacking… "), preservePermissions: false, ct);
+                ProgressScaler.Scale(progress, "rms", 0.80, 0.92, "Unpacking… "), preservePermissions: false, ct);
 
             // Normalize the layout. The community zip wraps the meshes as
             // "FreeSO Remesh Package/MeshReplace/*.fsom"; a CI artifact may ship them flat. Either way,
@@ -115,7 +116,7 @@ public sealed class RmsInstaller : IComponentInstaller
     /// zip/redirect or a small JSON manifest with a {full_zip|url|remesh} field), then a GitHub
     /// client-release asset whose name mentions "remesh"/"mesh"/"3d" as a fallback.
     /// </summary>
-    private async Task<string?> ResolveRemeshZipUrlAsync(CancellationToken ct)
+    private async Task<(string? url, string? sha256)> ResolveRemeshZipUrlAsync(CancellationToken ct)
     {
         if (_config.ResourceCentral.TryGetValue("3DModels", out var central) && !string.IsNullOrWhiteSpace(central))
         {
@@ -132,19 +133,23 @@ public sealed class RmsInstaller : IComponentInstaller
                         foreach (var key in new[] { "full_zip", "url", "remesh" })
                             if (root.ValueKind == JsonValueKind.Object &&
                                 root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
-                                return v.GetString();
+                            {
+                                string? sha = root.TryGetProperty("sha256", out var s) && s.ValueKind == JsonValueKind.String
+                                    ? s.GetString() : null;
+                                return (v.GetString(), sha);
+                            }
                     }
                     else
                     {
                         // Direct file (zip / octet-stream) or a redirect we can just hand to DownloadService.
-                        return central;
+                        return (central, null);
                     }
                 }
             }
-            catch { /* fall through to GitHub */ }
+            catch (Exception ex) { Log.Warn("Remesh ResourceCentral lookup failed; falling back to the GitHub release feed", ex); }
         }
 
-        // GitHub client-release asset fallback.
+        // GitHub client-release asset fallback (the asset's `digest` field is "sha256:<hex>" when present).
         try
         {
             using var ghResp = await GetAsync(_config.ClientReleaseFeed, ct);
@@ -160,26 +165,21 @@ public sealed class RmsInstaller : IComponentInstaller
                         || name.Contains("mesh", StringComparison.OrdinalIgnoreCase)
                         || name.Contains("3d", StringComparison.OrdinalIgnoreCase);
                     if (looksRemesh && asset.TryGetProperty("browser_download_url", out var url))
-                        return url.GetString();
+                    {
+                        string? digest = asset.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String
+                            ? d.GetString() : null;
+                        return (url.GetString(), digest);
+                    }
                 }
             }
         }
-        catch { /* no URL */ }
+        catch (Exception ex) { Log.Warn("GitHub remesh asset lookup failed; using the community mirror", ex); }
 
         // Last resort: the community mirror, so the feature works before operators re-host the package.
-        return CommunityRemeshMirror;
+        // No published hash exists for it, so this path stays unverified (flagged in LAUNCHER_ROADMAP.md).
+        return (CommunityRemeshMirror, null);
     }
 
     private static Task<HttpResponseMessage> GetAsync(string url, CancellationToken ct)
-    {
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.TryAddWithoutValidation("User-Agent", "OpenSO.Launcher");
-        return Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
-    }
-
-    private static IProgress<ProgressReport> Scale(IProgress<ProgressReport> outer, string stage,
-        double lo, double hi, string? prefix = null) =>
-        new Progress<ProgressReport>(r =>
-            outer.Report(new ProgressReport(stage, lo + (hi - lo) * r.Fraction,
-                prefix != null ? prefix + (r.Detail ?? "") : r.Detail)));
+        => Http.SendAsync(HttpRequests.Get(url), HttpCompletionOption.ResponseHeadersRead, ct);
 }

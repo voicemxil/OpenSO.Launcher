@@ -1,0 +1,33 @@
+name: CI
+
+# Build the launcher and run the headless logic tests on every push/PR, so a regression (a broken
+# SwapIntoPlace, a zip-slip guard that stops guarding, a download that stops verifying its hash) is
+# caught before it can be tagged into a release. Runs on all three OSes because several code paths are
+# platform-specific: the Windows registry probe, the case-insensitive zip/cab-slip guard, and the POSIX
+# unix-file-mode handling in extraction / TempFiles.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Build launcher
+        run: dotnet build OpenSO.Launcher/OpenSO.Launcher.csproj -c Release
+
+      - name: Run logic tests
+        run: dotnet run --project OpenSO.Launcher.Tests/OpenSO.Launcher.Tests.csproj -c Release

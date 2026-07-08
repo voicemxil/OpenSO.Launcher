@@ -250,10 +250,25 @@
         <StackPanel IsVisible="{Binding IsDownloads}" Margin="30,22,30,28" Spacing="16">
           <TextBlock Classes="h1" Text="Downloads"/>
           <TextBlock Classes="sub" Text="Active downloads and installation progress."/>
+
+          <!-- Loud error banner: a blocked/failed operation (e.g. a file locked by the running game)
+               surfaces here in red with the specific cause, instead of raw exception text in the subtext. -->
+          <Border Classes="card" IsVisible="{Binding HasError}"
+                  Background="{DynamicResource ErrBg}" BorderBrush="{DynamicResource Bad}" BorderThickness="1">
+            <Grid ColumnDefinitions="Auto,*">
+              <TextBlock Grid.Column="0" Classes="emoji" Text="⚠️" Margin="0,0,14,0" VerticalAlignment="Top"/>
+              <StackPanel Grid.Column="1" Spacing="3">
+                <TextBlock Text="Couldn't complete the download" Foreground="{DynamicResource Bad}" FontWeight="Bold" FontSize="15"/>
+                <TextBlock Text="{Binding ErrorMessage}" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
+              </StackPanel>
+            </Grid>
+          </Border>
+
           <Border Classes="card">
             <StackPanel Spacing="10">
               <TextBlock Text="{Binding StatusLine}" Foreground="{DynamicResource Ink}" TextWrapping="Wrap"/>
               <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="10"
+                           IsIndeterminate="{Binding ProgressIndeterminate}"
                            Foreground="{DynamicResource Accent}" Background="{DynamicResource Track}"/>
               <TextBlock Text="{Binding ProgressDetail}" Classes="sub" TextWrapping="Wrap"/>
             </StackPanel>
@@ -279,11 +294,6 @@
                   <TextBlock Text="3D Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
                   <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
-                </StackPanel>
-                <StackPanel Spacing="5">
-                  <TextBlock Text="Refresh rate (Hz)" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
-                  <NumericUpDown Value="{Binding RefreshRate}" Minimum="30" Maximum="360" Increment="1" FormatString="0"/>
-                  <TextBlock Classes="sub" Text="Higher refresh rates give smoother motion (the render rate is decoupled from the sim)."/>
                 </StackPanel>
               </StackPanel>
             </Border>

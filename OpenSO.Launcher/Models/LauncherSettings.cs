@@ -6,14 +6,13 @@ namespace OpenSO.Launcher.Models;
 
 /// <summary>
 /// Persisted launcher + in-game preferences (JSON in the launcher's roaming app-data dir). Mirrors the
-/// upstream launcher's userSettings.ini (Game.GraphicsMode/3DMode/RefreshRate, Launcher.DesktopNotifications,
+/// upstream launcher's userSettings.ini (Game.GraphicsMode/3DMode, Launcher.DesktopNotifications,
 /// Launcher.OnGameClose). Saved on every change so the SETTINGS page is sticky across runs.
 /// </summary>
 public sealed class LauncherSettings
 {
     public string GraphicsMode { get; set; } = "OpenGL";
     public bool Enable3D { get; set; } = false;
-    public int RefreshRate { get; set; } = 60;
     public bool LiveNotifications { get; set; } = true;
     public string ClosingBehavior { get; set; } = "Exit launcher";
 
@@ -31,12 +30,23 @@ public sealed class LauncherSettings
         return new LauncherSettings();
     }
 
+    private static readonly object SaveLock = new();
+
     public void Save()
     {
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            // Serialize BEFORE taking the lock, write-temp-then-rename INSIDE it: rapid successive
+            // changes (every settings control saves on change) can't interleave writes, and a crash
+            // mid-write can only lose the .tmp — never truncate the real settings.json.
+            var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
+            lock (SaveLock)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+                var tmp = FilePath + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, FilePath, overwrite: true); // same-volume rename: atomic replace
+            }
         }
         catch { /* non-fatal */ }
     }
