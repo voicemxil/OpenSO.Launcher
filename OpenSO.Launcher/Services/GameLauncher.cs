@@ -78,8 +78,7 @@ public sealed class GameLauncher
         return proc;
     }
 
-    /// <summary>Builds the launch arguments, mirroring fsolauncher.js launchGame(). Also passed to the
-    /// in-game patcher (update.exe), which hands them back to the game when it relaunches it.</summary>
+    /// <summary>Builds the launch arguments, mirroring fsolauncher.js launchGame().</summary>
     internal static List<string> BuildArgs(Options o)
     {
         var args = new List<string>();
