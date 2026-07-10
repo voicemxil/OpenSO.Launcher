@@ -20,7 +20,50 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    name: Build & test (gate)
+    # Same build+test gate as ci.yml: a release can never be cut from a failing suite. The test run's
+    # stdout is captured and uploaded so a release's verification is auditable after the fact.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build launcher app (Release)
+        run: dotnet build OpenSO.Launcher/OpenSO.Launcher.csproj -c Release
+
+      - name: Run headless logic tests
+        working-directory: OpenSO.Launcher.Tests
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet run 2>&1 | tee ../test-results.log
+
+      - name: Publish test summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### OpenSO.Launcher.Tests (release gate)"
+            echo '```'
+            if [ -f test-results.log ]; then cat test-results.log; else echo "(no test output captured — an earlier step failed before the suite ran)"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-log
+          path: test-results.log
+          retention-days: 90
+          if-no-files-found: warn
+
   build:
+    needs: test
     strategy:
       fail-fast: false
       matrix:

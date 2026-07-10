@@ -1,0 +1,38 @@
+name: CI
+
+# Build the launcher app and run the headless OpenSO.Launcher.Tests suite on every PR and every push to
+# main. This is the guard against shipping broken asset selection, ZIP-safety regressions, interrupted
+# swaps, lost user data, or invalid update chains — see BUILD_AND_TEST.md "Continuous integration".
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build launcher app (Release)
+        # Compiles the shipped Avalonia app. Warnings are informative only (no TreatWarningsAsErrors in
+        # the csproj); any compile error fails this step and the job.
+        run: dotnet build OpenSO.Launcher/OpenSO.Launcher.csproj -c Release
+
+      - name: Run headless logic tests
+        # Mirrors BUILD_AND_TEST.md exactly: `cd OpenSO.Launcher.Tests && dotnet run`. The harness exits
+        # non-zero on any assertion failure, which fails this step (and the job).
+        working-directory: OpenSO.Launcher.Tests
+        run: dotnet run

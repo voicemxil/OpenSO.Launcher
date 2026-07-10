@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -47,8 +48,12 @@ public sealed class SelfUpdateService : ISelfUpdateService
     public async Task ApplyLauncherUpdateAsync(IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
         var (tag, assetUrl) = await ResolveLatestAsync(ct);
-        if (tag == null || assetUrl == null)
-            throw new InvalidOperationException("No launcher update asset is available for this platform.");
+        if (tag == null)
+            throw new InvalidOperationException("No launcher update is available right now (the update feed is unreachable).");
+        if (assetUrl == null)
+            // A release exists but ships no build for THIS platform — never swap in a different RID's payload.
+            throw new PlatformNotSupportedException(
+                $"This launcher release does not include a build for your platform ({CurrentRid()}) yet.");
 
         var appDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         var staging = Path.Combine(Path.GetTempPath(), "openso-launcher-update-" + Guid.NewGuid().ToString("N"));
@@ -79,26 +84,37 @@ public sealed class SelfUpdateService : ISelfUpdateService
             string? assetUrl = null;
             if (root.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
-                var rid = CurrentRid();
-                string? generic = null;
+                var list = new List<(string? name, string? url)>();
                 foreach (var a in assets.EnumerateArray())
-                {
-                    var name = a.TryGetProperty("name", out var n) ? n.GetString() : null;
-                    if (name == null || !name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!a.TryGetProperty("browser_download_url", out var u)) continue;
-                    var url = u.GetString();
-                    if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) { assetUrl = url; break; } // exact platform
-                    generic ??= url; // fall back to the first .zip asset
-                }
-                assetUrl ??= generic;
+                    list.Add((a.TryGetProperty("name", out var n) ? n.GetString() : null,
+                              a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null));
+                assetUrl = PickLauncherAsset(list, CurrentRid());
             }
             return (tag?.TrimStart('v', 'V'), assetUrl);
         }
         catch { return (null, null); }
     }
 
+    /// <summary>
+    /// Picks the launcher zip for this EXACT <paramref name="rid"/> from a release's assets. Exact-RID
+    /// ONLY — there is deliberately NO generic/first-zip fallback: a running launcher must never overwrite
+    /// itself with a different platform's build (the old "fall back to the first .zip asset" logic would
+    /// have handed a linux-arm64 launcher the Windows or x64 zip). Returns null when this platform has no
+    /// build, which the caller surfaces as a clear "not supported yet" error.
+    /// </summary>
+    internal static string? PickLauncherAsset(IEnumerable<(string? name, string? url)> assets, string rid)
+    {
+        foreach (var (name, url) in assets)
+        {
+            if (name == null || url == null) continue;
+            if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+            if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return url; // exact platform match only
+        }
+        return null;
+    }
+
     /// <summary>This machine's release RID — matches launcher asset suffixes (win-x64, osx-arm64, …).</summary>
-    private static string CurrentRid()
+    internal static string CurrentRid()
     {
         var arch = RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64" : "x64";
         if (OperatingSystem.IsWindows()) return "win-" + arch;

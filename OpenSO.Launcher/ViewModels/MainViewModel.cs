@@ -7,6 +7,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OpenSO.Launcher.Models;
 using OpenSO.Launcher.Services;
+using OpenSO.Launcher.Services.Installers;
+using OpenSO.Launcher.Services.Updates;
 
 namespace OpenSO.Launcher.ViewModels;
 
@@ -361,11 +363,14 @@ public partial class MainViewModel : ObservableObject
         Windowed = true,
     };
 
-    /// <summary>Updates the installed client to the server's required version — the same way the game
-    /// itself does it: download the incremental delta chain into PatchFiles/ and run the bundled
-    /// patcher (update.exe), which applies it and relaunches the game. Falls back to a full reinstall
-    /// (download + atomic swap) when that path isn't available: macOS/Linux builds don't ship the
-    /// patcher, the update feed may be down, or the install predates version stamping.</summary>
+    /// <summary>Updates the installed client to the server's required version. On Windows, first tries the
+    /// headless in-launcher delta engine (<see cref="DeltaUpdateEngine"/>): it applies the manifest's
+    /// incremental patch CHAIN transactionally — every hop hash-verified before mutation, backed up, and
+    /// rolled back on failure, with the version marker advanced per hop. The legacy <c>update.exe</c> is
+    /// NEVER invoked. On ANY delta outcome other than a fully-applied chain (non-Windows, no/partial chain,
+    /// hash mismatch, apply failure, or an install that predates version stamping) it falls back
+    /// automatically to the full-package reinstall (download + atomic swap), which is always safe and
+    /// hash-verified and preserves user data. Which path ran is surfaced in the notification.</summary>
     private async Task UpdateGameAsync()
     {
         if (Busy) return;
@@ -379,12 +384,20 @@ public partial class MainViewModel : ObservableObject
                 StatusLine = $"{r.Stage}: {r.Detail}";
             });
 
-            var patch = new GameUpdateService(_config);
-            var patched = await patch.TryPatchUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
-                GameLauncher.BuildArgs(BuildLaunchOptions()), reporter);
-            if (patched)
+            // Delta path (Windows / win-x64 only — the only platform deltas are published for). Any failure
+            // returns false, which drops through to the full package below; the delta engine never throws
+            // the update, and never touches user-owned files (Content/config.ini, NLog.config).
+            bool appliedDelta = false;
+            if (OperatingSystem.IsWindows())
             {
-                Notify("Update applied — the patcher restarts OpenSO when it's done.");
+                var engine = new DeltaUpdateEngine(_config);
+                appliedDelta = await engine.TryDeltaUpdateAsync(_fsoPath!, InstalledGameVersion, ServerGameVersion,
+                    FsoInstaller.CurrentRid(), reporter);
+            }
+
+            if (appliedDelta)
+            {
+                Notify("Game updated via incremental delta. Press PLAY to launch.");
             }
             else
             {

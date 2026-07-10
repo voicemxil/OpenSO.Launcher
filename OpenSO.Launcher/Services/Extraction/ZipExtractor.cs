@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
@@ -11,6 +12,11 @@ namespace OpenSO.Launcher.Services.Extraction;
 /// Extracts a zip into a destination directory, creating subdirectories, reporting each entry,
 /// and (optionally) preserving the unix file mode for executables — the cpperm behavior used by
 /// the Mac/Linux extras in fso.js step6.
+///
+/// Archives come from the network (client, self-update, TSO, remesh) and are therefore untrusted:
+/// EVERY entry — files and directories — is validated against the destination BEFORE any disk
+/// mutation (two passes), and the whole archive is rejected on the first unsafe entry so a
+/// half-extraction of a malicious zip is never left on disk. See ArchivePathGuard / BUILD_AND_TEST.md.
 /// </summary>
 public static class ZipExtractor
 {
@@ -21,29 +27,35 @@ public static class ZipExtractor
         if (!File.Exists(from))
             throw new FileNotFoundException($"file to extract {from} does not exist");
 
-        Directory.CreateDirectory(to);
-
         using var archive = ZipFile.OpenRead(from);
-        int total = archive.Entries.Count;
-        int done = 0;
+        var destRoot = Path.GetFullPath(to);
 
+        // PASS 1 — validate EVERY entry against the destination before touching the disk. Any unsafe
+        // entry (traversal, rooted path, sibling escape, symlink/special file) rejects the WHOLE archive
+        // with nothing written: no partial extraction of an untrusted zip.
+        var plan = new List<(ZipArchiveEntry Entry, string Target, bool IsDir)>(archive.Entries.Count);
         foreach (var entry in archive.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            ArchivePathGuard.RejectIfLinkOrSpecial(entry);
+            bool isDir = entry.FullName.EndsWith('/') || string.IsNullOrEmpty(entry.Name);
+            var target = ArchivePathGuard.ResolveContainedPath(destRoot, entry.FullName);
+            plan.Add((entry, target, isDir));
+        }
+
+        // PASS 2 — the archive is proven safe; materialize it.
+        Directory.CreateDirectory(to);
+        int total = plan.Count, done = 0;
+        foreach (var (entry, destination, isDir) in plan)
         {
             ct.ThrowIfCancellationRequested();
             done++;
 
-            // Directory entry (name ends with '/') — just ensure it exists.
-            if (entry.FullName.EndsWith("/") || string.IsNullOrEmpty(entry.Name))
+            if (isDir)
             {
-                Directory.CreateDirectory(Path.Combine(to, entry.FullName));
+                Directory.CreateDirectory(destination);
                 continue;
             }
-
-            var destination = Path.GetFullPath(Path.Combine(to, entry.FullName));
-
-            // Zip-slip guard: never write outside the destination directory.
-            if (!destination.StartsWith(Path.GetFullPath(to), StringComparison.Ordinal))
-                throw new IOException($"Blocked unsafe zip entry path: {entry.FullName}");
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 
