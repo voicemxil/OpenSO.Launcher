@@ -16,8 +16,8 @@ namespace OpenSO.Launcher.Services.Installers;
 /// <summary>
 /// Port of lib/installers/fso.js — installs the OpenSO client.
 /// Steps mirror the upstream:
-///   1. Resolve the client zip URL (OpenSO API first, GitHub release assets as fallback)
-///   2. Download it (resilient DownloadService)
+///   1. Resolve the client package (canonical per-RID manifest first, GitHub release assets as fallback)
+///   2. Download it (resilient DownloadService), verifying the manifest's SHA-256 BEFORE extraction
 ///   3. Create the install directory
 ///   4. Extract the zip into it
 ///   5. Register the install (registry on Windows / local config elsewhere)
@@ -39,15 +39,18 @@ public sealed class FsoInstaller : IComponentInstaller
 
     public async Task InstallAsync(string installPath, IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
-        // Step 1: resolve the zip URL.
+        // Step 1: resolve the client package (URL + optional SHA-256) for THIS exact platform.
         progress.Report(new ProgressReport("client", 0, "Locating the latest client…"));
-        var zipUrl = await ResolveClientZipUrlAsync(ct)
+        var package = await ResolveClientPackageAsync(ct)
             ?? throw new InvalidOperationException("Could not obtain OpenSO client release information.");
 
-        // Step 2: download.
+        // Step 2: download. When the package came from the manifest it carries a SHA-256; DownloadService
+        // verifies it and DELETES the file on mismatch, so a tampered/corrupt package can never reach the
+        // extract below (hash-verify precedes extraction). The GitHub fallback has no hash (null) — see
+        // ResolveClientPackageAsync for why that path stays exact-RID-only.
         var stamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var tempZip = Path.Combine(Path.GetTempPath(), $"openso-client-{stamp}.zip");
-        var dl = new DownloadService(zipUrl, tempZip);
+        var dl = new DownloadService(package.Url, tempZip, expectedSha256: package.Sha256);
         await dl.RunAsync(Scale(progress, "client", 0.00, 0.70), ct); // downloads = first 70%
 
         // ATOMIC UPDATE. Never extract directly into the live install dir: an interrupted extract (network
@@ -212,32 +215,55 @@ public sealed class FsoInstaller : IComponentInstaller
 
     private static void TryDeleteDir(string path) { try { if (Directory.Exists(path)) Directory.Delete(path, true); } catch { } }
 
+    /// <summary>A resolved client download: the package URL plus the manifest's SHA-256 when one is known
+    /// (null for the GitHub-asset fallback, which publishes no per-asset hash in the release feed).</summary>
+    internal readonly record struct ClientPackage(string Url, string? Sha256);
+
     /// <summary>
-    /// Port of fso.js getZipUrl(): try the OpenSO API release feed first (expects an array with a
-    /// `full_zip`), then fall back to the GitHub releases API, picking the asset whose name contains
-    /// "client". Repointed at OpenSO endpoints via LauncherConfig.
+    /// Source precedence for the game-client full package (see BUILD_AND_TEST.md → "Client update source
+    /// precedence"):
+    ///
+    ///   1. Canonical per-RID manifest (openso-manifest.json, <see cref="LauncherConfig.ClientManifestUrl"/>).
+    ///      Parsed as schemaVersion 1, EXACT-RID lookup, returns the RID's hash-verified `full` package.
+    ///   2. GitHub release-asset enumeration — a CONTROLLED FALLBACK used ONLY when the manifest is
+    ///      *unavailable* (network failure / not published on this release). Still exact-RID (wave-1
+    ///      behavior); it carries no hash.
+    ///
+    /// A manifest that is *reachable but wrong* (malformed JSON, unknown schemaVersion, or missing this RID)
+    /// is a HARD FAIL — it does NOT silently downgrade to the less-verified GitHub path, so a corrupt or
+    /// hostile manifest can't route the user around hash verification. Missing RID surfaces as
+    /// <see cref="PlatformNotSupportedException"/>; a bad schema/shape as <see cref="InvalidOperationException"/>.
+    /// Both are surfaced to the user (MainViewModel → "Install failed: …") and never substitute another
+    /// platform's payload.
+    ///
+    /// Returns null only when NEITHER source is reachable (caller reports a generic "couldn't obtain release info").
     /// </summary>
-    private async Task<string?> ResolveClientZipUrlAsync(CancellationToken ct)
+    internal Task<ClientPackage?> ResolveClientPackageAsync(CancellationToken ct) =>
+        ResolveClientPackageAsync(CurrentRid(), ct);
+
+    /// <summary>Testable overload — <paramref name="rid"/> is normally this machine's <see cref="CurrentRid"/>.</summary>
+    internal async Task<ClientPackage?> ResolveClientPackageAsync(string rid, CancellationToken ct)
     {
-        // 1) OpenSO API (array of releases, [0].full_zip)
+        // 1) Canonical per-RID manifest. A NETWORK failure (unreachable / non-success) leaves the manifest
+        //    "unavailable" → fall through to the GitHub fallback. But once we HAVE the manifest bytes we
+        //    commit to them: SelectFromManifest throws on a malformed / unknown-schema / missing-RID
+        //    manifest and that error propagates (no fallback), so a tampered manifest can't dodge verification.
+        string? manifestJson = null;
         try
         {
-            using var apiResp = await GetAsync(_config.ClientManifestUrl, ct);
-            if (apiResp.IsSuccessStatusCode)
-            {
-                using var doc = JsonDocument.Parse(await apiResp.Content.ReadAsStringAsync(ct));
-                var root = doc.RootElement;
-                JsonElement first = root.ValueKind == JsonValueKind.Array && root.GetArrayLength() > 0
-                    ? root[0] : root;
-                if (first.ValueKind == JsonValueKind.Object &&
-                    first.TryGetProperty("full_zip", out var fz) && fz.ValueKind == JsonValueKind.String)
-                    return fz.GetString();
-            }
+            using var resp = await GetAsync(_config.ClientManifestUrl, ct);
+            if (resp.IsSuccessStatusCode)
+                manifestJson = await resp.Content.ReadAsStringAsync(ct);
         }
-        catch { /* fall through to GitHub */ }
+        catch { /* manifest unavailable — fall through to the GitHub fallback below */ }
 
-        // 2) GitHub releases fallback. See PickFullClientAsset for the selection rules (per-platform +
-        //    must be the FULL client zip, not the incremental delta / manifest).
+        if (manifestJson != null)
+            return SelectFromManifest(manifestJson, rid);
+
+        // 2) GitHub releases fallback. Materialize the asset list INSIDE the try (so a network/parse
+        //    failure returns null → generic error), then select OUTSIDE it (so the clear
+        //    "unsupported platform" error below is not swallowed).
+        List<(string? name, string? url)>? assetList = null;
         try
         {
             using var ghResp = await GetAsync(_config.ClientReleaseFeed, ct);
@@ -245,18 +271,88 @@ public sealed class FsoInstaller : IComponentInstaller
             using var doc = JsonDocument.Parse(await ghResp.Content.ReadAsStringAsync(ct));
             if (doc.RootElement.TryGetProperty("assets", out var assets) && assets.ValueKind == JsonValueKind.Array)
             {
-                var list = new List<(string? name, string? url)>();
+                assetList = new List<(string?, string?)>();
                 foreach (var asset in assets.EnumerateArray())
-                    list.Add((asset.TryGetProperty("name", out var n) ? n.GetString() : null,
-                              asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null));
-                var picked = PickFullClientAsset(list, CurrentRid());
-                if (picked != null) return picked;
+                    assetList.Add((asset.TryGetProperty("name", out var n) ? n.GetString() : null,
+                                   asset.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null));
             }
         }
-        catch { /* no URL */ }
+        catch { return null; } // release feed unreachable/invalid — caller reports a generic error
+
+        if (assetList != null)
+        {
+            var picked = PickFullClientAsset(assetList, rid);
+            if (picked != null) return new ClientPackage(picked, null); // exact-RID full client zip (no hash)
+            // The release IS reachable but ships no client for THIS platform. Never fall back to another
+            // RID's payload — fail clearly so the user sees why (surfaced by MainViewModel as "Install failed: …").
+            throw new PlatformNotSupportedException(
+                $"This OpenSO release does not include a client download for your platform ({rid}) yet.");
+        }
 
         return null;
     }
+
+    /// <summary>
+    /// Selects the exact-RID `full` package from the canonical per-RID manifest (openso-manifest.json).
+    /// The manifest and its assets are untrusted transport input, so this is strict:
+    ///   - malformed JSON or a non-object root  → <see cref="InvalidOperationException"/> (never fall back),
+    ///   - <c>schemaVersion</c> absent or != 1  → <see cref="InvalidOperationException"/> ("update the launcher"),
+    ///   - this <paramref name="rid"/> absent from <c>clients</c> → <see cref="PlatformNotSupportedException"/>
+    ///     (a missing RID is a clear error — NEVER substitute another platform's build),
+    ///   - the RID's <c>full</c> package missing its url/sha256 → <see cref="InvalidOperationException"/>.
+    /// On success returns the RID's full <c>url</c> and lowercase-hex <c>sha256</c> (verified before extraction).
+    /// </summary>
+    internal static ClientPackage SelectFromManifest(string json, string rid)
+    {
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(json); }
+        catch (JsonException ex) { throw new InvalidOperationException("The OpenSO client manifest is malformed and could not be read.", ex); }
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("The OpenSO client manifest is malformed (expected a JSON object).");
+            if (!root.TryGetProperty("schemaVersion", out var sv) || sv.ValueKind != JsonValueKind.Number
+                || !sv.TryGetInt32(out var schema) || schema != 1)
+                throw new InvalidOperationException(
+                    "The OpenSO client manifest uses an unsupported schema version; please update the launcher.");
+            if (!root.TryGetProperty("clients", out var clients) || clients.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("The OpenSO client manifest is malformed (no clients map).");
+
+            // EXACT-RID lookup only — a missing RID must never borrow another platform's payload.
+            if (!clients.TryGetProperty(rid, out var entry) || entry.ValueKind != JsonValueKind.Object)
+                throw new PlatformNotSupportedException(
+                    $"This OpenSO release does not include a client download for your platform ({rid}) yet.");
+
+            if (!entry.TryGetProperty("full", out var full) || full.ValueKind != JsonValueKind.Object
+                || !full.TryGetProperty("url", out var u) || u.ValueKind != JsonValueKind.String
+                || !full.TryGetProperty("sha256", out var h) || h.ValueKind != JsonValueKind.String)
+                throw new InvalidOperationException(
+                    $"The OpenSO client manifest entry for {rid} is missing its full package (url + sha256).");
+
+            var url = u.GetString();
+            var sha = h.GetString();
+            if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(sha))
+                throw new InvalidOperationException(
+                    $"The OpenSO client manifest entry for {rid} is missing its full package (url + sha256).");
+
+            // NOTE: `entry.deltas` (Windows-only, optional) is intentionally NOT consumed HERE — the full
+            // package is always sufficient. The launcher's incremental path is the headless, transactional
+            // DeltaUpdateEngine (Services/Updates), which consumes these `deltas` in the update flow and
+            // falls back to this full package on any failure. See BUILD_AND_TEST.md → "Deltas".
+            return new ClientPackage(url, sha.Trim().ToLowerInvariant());
+        }
+    }
+
+    /// <summary>Back-compat URL-only resolver (drops the hash). Kept for callers/tests that only need the
+    /// resolved URL; the install path uses <see cref="ResolveClientPackageAsync(CancellationToken)"/> so it
+    /// can hash-verify the download.</summary>
+    internal Task<string?> ResolveClientZipUrlAsync(CancellationToken ct) =>
+        ResolveClientZipUrlAsync(CurrentRid(), ct);
+
+    /// <summary>Testable overload — <paramref name="rid"/> is normally this machine's <see cref="CurrentRid"/>.</summary>
+    internal async Task<string?> ResolveClientZipUrlAsync(string rid, CancellationToken ct) =>
+        (await ResolveClientPackageAsync(rid, ct))?.Url;
 
     /// <summary>
     /// Picks the FULL client zip for <paramref name="rid"/> from a release's assets. A release publishes
@@ -264,13 +360,15 @@ public sealed class FsoInstaller : IComponentInstaller
     /// (OpenSO-client-win-x64.zip), the incremental delta zip (…-win-x64.incremental.zip), and its manifest
     /// (…-win-x64.manifest.json). The delta is only the CHANGED files and the manifest isn't even a zip —
     /// installing either yields a broken, verification-failing client (and an "update again" loop). So match
-    /// ONLY a real full ".zip" that is NOT the incremental, preferring the exact-RID asset then any full
-    /// client zip. (Before incremental deltas existed there was one matching asset, so the old "first name
-    /// contains client+rid" logic happened to work.)
+    /// ONLY a real full ".zip" that is NOT the incremental, for this EXACT RID.
+    ///
+    /// The match is exact-RID ONLY: there is deliberately NO generic/any-platform fallback. A release that
+    /// ships no build for this platform must fail with a clear error (see ResolveClientZipUrlAsync) — never
+    /// install e.g. the Windows or x64 client on linux-arm64, which the old "first full client zip" fallback
+    /// would have done. Returns null when no exact-RID full client zip is present.
     /// </summary>
     internal static string? PickFullClientAsset(IEnumerable<(string? name, string? url)> assets, string rid)
     {
-        string? generic = null;
         foreach (var (name, url) in assets)
         {
             if (name == null || url == null) continue;
@@ -278,16 +376,15 @@ public sealed class FsoInstaller : IComponentInstaller
             if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;       // excludes .manifest.json
             if (name.Contains("incremental", StringComparison.OrdinalIgnoreCase)) continue; // excludes the delta zip
             if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return url;         // exact platform match
-            generic ??= url;                                                                // any full client zip
         }
-        return generic;
+        return null; // no build for this RID — caller reports a clear "platform not supported" error
     }
 
     /// <summary>
     /// This machine's OpenSO release RID — matches the release asset suffixes
     /// (win-x64, linux-x64, osx-x64, osx-arm64).
     /// </summary>
-    private static string CurrentRid()
+    internal static string CurrentRid()
     {
         string os = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win"
             : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx"

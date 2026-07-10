@@ -120,9 +120,10 @@ public static class CabExtractor
             long start = Math.Min(f.UOff, data.Length);
             long len = Math.Min(f.USize, data.Length - start);
 
-            var dest = Path.GetFullPath(Path.Combine(to, f.Name));
-            if (!dest.StartsWith(Path.GetFullPath(to), StringComparison.Ordinal))
-                throw new IOException($"Blocked unsafe cab entry path: {f.Name}");
+            // Canonicalize + relative-path containment (shared with the zip extractor): rejects
+            // traversal, rooted paths, and sibling-prefix escapes — the old StartsWith check accepted
+            // a sibling whose name began with the destination's.
+            var dest = ArchivePathGuard.ResolveContainedPath(to, f.Name);
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             using (var fs = File.Create(dest)) fs.Write(data, (int)start, (int)len);
 
