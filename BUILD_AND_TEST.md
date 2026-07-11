@@ -212,6 +212,44 @@ is additionally validated relative-safe (no `..`/rooted paths) before it can rea
 been removed; `DeltaUpdateEngine` is now the delta path. `update.exe` itself remains, in-game, as the
 temporary Windows legacy/recovery tool (unchanged in the OpenSO repo).
 
+## Game → launcher handoff
+
+On Windows, a **Launcher-managed** install can hand control back to the launcher when the game client itself
+detects a version mismatch (its login handshake against the server): the client starts the launcher with
+`--update-game` and exits. The contract is fixed and agreed with the game side:
+
+**Marker file — `openso-launcher.path`.** Written/refreshed by `LauncherHandoff.WriteMarker`
+(`Services/LauncherHandoff.cs`) into the **GAME install root** (the FSO directory): a UTF-8-**without-BOM**,
+single-line file holding the absolute path of *this launcher's own executable* (`Environment.ProcessPath`,
+falling back to `Process.GetCurrentProcess().MainModule?.FileName` — the actual apphost file, never a macOS
+`.app` bundle directory). The **no-BOM** requirement is load-bearing, not cosmetic: `Encoding.UTF8` emits a
+byte-order-mark preamble by default, which would land as a literal leading `U+FEFF` character in the file;
+the game's reader only does a plain `string.Trim()`, and .NET's `char.IsWhiteSpace` does **not** treat
+`U+FEFF` as whitespace, so a BOM would survive the trim and break `File.Exists`/`Directory.Exists` on an
+otherwise-correct path (caught during manual verification of this feature — see `LauncherHandoff`'s
+`Utf8NoBom` encoding and the raw-byte assertion in its test). The game treats an install as Launcher-managed
+**iff** this file exists and the path it names still exists; it reads the marker, trims the single line, and
+starts that path directly with `Process.Start(path, "--update-game")`. Writing the marker is always
+**best-effort** — a permissions error or an unwritable/missing install dir is swallowed and never fails the
+caller. One shared helper is called from three places so both fresh and pre-existing installs end up marked:
+
+1. After a successful full install/update — `FsoInstaller.InstallAsync`.
+2. After a successful delta update — `DeltaUpdateEngine.TryDeltaUpdateAsync`.
+3. On **every** game launch — `GameLauncher.Launch` — so an install made by an *older* launcher (before this
+   marker existed) gets one the first time the user presses PLAY, without waiting for the next update.
+
+**`--update-game` CLI flag.** Parsed by `LauncherArgs.HasUpdateGame` (unrecognized args are ignored) from the
+args Avalonia's desktop lifetime captures (`Program.cs` → `StartWithClassicDesktopLifetime(args)` →
+`IClassicDesktopStyleApplicationLifetime.Args`, read in `App.OnFrameworkInitializationCompleted`). When set,
+`App` constructs `MainViewModel(updateGame: true)`, which fires `MainViewModel.RunUpdateGameHandoffAsync()`
+once startup is under way (fire-and-forget, same pattern as the launcher's other startup tasks) — guarded by
+a re-entrancy flag so the flag can only ever trigger the flow once per process. That method: refreshes the
+install state, takes one deterministic read of the server's required version, updates **only if needed**
+(`DeltaUpdateEngine.NeedsUpdate` — the same delta-chain-or-full pipeline PLAY/UPDATE GAME drive manually, with
+the normal progress UI), and **auto-launches the game on success**. When the install is already current, it
+skips straight to launch — **no unnecessary reinstall**. On failure it surfaces the normal error in the UI,
+**stays open**, and does **not** retry or loop.
+
 ## What works today (tested)
 
 - Resilient downloads (retry/resume/progress, MD5 + SHA-256 verification) — `DownloadService`
@@ -222,6 +260,12 @@ temporary Windows legacy/recovery tool (unchanged in the OpenSO repo).
 - FSO client install (per-RID manifest → SHA-256-verify → extract → register) — `FsoInstaller` (see "Client update source precedence")
 - Headless transactional delta updates (multi-hop chain, per-hop SHA-256 + backup/apply/removals/rollback, version marker last, user-data preservation, automatic full fallback) — `DeltaUpdateEngine` (see "Deltas"); the in-launcher replacement for `update.exe`
 - TSO assets install (download → unzip → find Data1.cab → CAB-extract → register) — `TsoInstaller`
+- Game → launcher handoff (see "Game → launcher handoff" above): marker write/refresh + best-effort failure
+  swallowing (`LauncherHandoff`), `--update-game` arg recognition (`LauncherArgs`), and the update-needed
+  decision (`DeltaUpdateEngine.NeedsUpdate`) are all headlessly tested. `MainViewModel.RunUpdateGameHandoffAsync`
+  itself (the auto-run-on-startup wiring) is **not** headlessly tested — `MainViewModel`/`App` need the
+  Avalonia UI loop and aren't linked into `OpenSO.Launcher.Tests`; it's exercised by running the launcher
+  with `--update-game` against a real install.
 
 ## Still to port (next slices)
 

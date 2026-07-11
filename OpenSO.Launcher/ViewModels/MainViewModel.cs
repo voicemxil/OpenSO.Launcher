@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -33,6 +34,25 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Cancelled when the app shuts down — ends the clock/status polling loops so no
     /// background work outlives the window (see App.OnFrameworkInitializationCompleted).</summary>
     private readonly CancellationTokenSource _shutdownCts = new();
+
+    /// <summary>Guards <see cref="RunUpdateGameHandoffAsync"/> so the <c>--update-game</c> flag can only
+    /// ever trigger the update-then-launch flow once per process, even if something re-entered it.</summary>
+    private bool _updateGameHandoffRan;
+
+    // ---- Polling cadences (named so they're easy to tune) ------------------------------------------
+    /// <summary>Steady-state server-status poll interval once the server is reachable. The endpoint is
+    /// cached ~10s server-side, so polling faster than this buys nothing.</summary>
+    private static readonly TimeSpan StatusPollSteady = TimeSpan.FromSeconds(10);
+    /// <summary>Faster poll used while the server looks offline/unreachable, so a restart/deploy is
+    /// picked up near-immediately instead of waiting a full steady interval.</summary>
+    private static readonly TimeSpan StatusPollFast = TimeSpan.FromSeconds(3);
+    /// <summary>How often to re-check for a new launcher version so a long-running launcher still
+    /// learns about updates (the check is startup-only otherwise).</summary>
+    private static readonly TimeSpan LauncherUpdatePoll = TimeSpan.FromHours(6);
+
+    /// <summary>Signalled to wake the status-poll loop early (e.g. after a manual Refresh) so it
+    /// re-schedules instead of firing a second, overlapping poll on top of the manual one.</summary>
+    private readonly SemaphoreSlim _pollNudge = new(0, 1);
 
     /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
     public void Shutdown()
@@ -101,17 +121,37 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> Notifications { get; } = new();
 
     // ---- Settings (bound on the SETTINGS page) ----------------------------------------------------
-    public string[] GraphicsModes { get; } = { "OpenGL", "DirectX", "Software" };
+    // DirectX is a Windows-only backend, so only offer it there — on macOS/Linux the game always uses
+    // OpenGL. (GameLauncher also coerces to ogl at launch, but hiding the option keeps the UI honest.)
+    private static readonly bool IsWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    public string[] GraphicsModes { get; } = IsWindows
+        ? new[] { "OpenGL", "DirectX", "Software" }
+        : new[] { "OpenGL", "Software" };
+    /// <summary>Caption under the Graphics Mode picker — only mentions DirectX where it's actually
+    /// selectable, so macOS/Linux users aren't told about an option they can't see.</summary>
+    public string GraphicsModeHint => IsWindows
+        ? "DirectX usually performs best on Windows; Software is a compatibility fallback."
+        : "OpenGL is used on macOS/Linux; Software is a compatibility fallback.";
     public string[] OnOff { get; } = { "Disabled", "Enabled" };
     public string[] ClosingBehaviors { get; } = { "Exit launcher", "Minimize to tray", "Do nothing" };
 
     [ObservableProperty] private string _graphicsMode = "OpenGL";
     [ObservableProperty] private string _threeDMode = "Disabled";
-    [ObservableProperty] private int _refreshRate = 60;
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";
 
-    public MainViewModel()
+    // ---- Manual refresh state (SERVER STATUS card) ------------------------------------------------
+    /// <summary>True while a manual Refresh is in flight — the button binds this to disable itself and
+    /// swap to a "checking…" label, guarding against overlapping refreshes.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RefreshButtonText))]
+    private bool _isRefreshing;
+    public string RefreshButtonText => IsRefreshing ? "…" : "Refresh";
+
+    /// <param name="updateGame">True when the launcher was started with <c>--update-game</c> — the game
+    /// client's handoff on a version mismatch (see BUILD_AND_TEST.md → "Game → launcher handoff"). When
+    /// set, <see cref="RunUpdateGameHandoffAsync"/> runs automatically once startup is under way.</param>
+    public MainViewModel(bool updateGame = false)
     {
         _installState = new InstallStateService(_config);
         _orchestrator = new InstallOrchestrator(_config, _installState);
@@ -119,15 +159,26 @@ public partial class MainViewModel : ObservableObject
         _selfUpdate = new SelfUpdateService(_config);
         _status = new StatusService(_config);
         _settings = LauncherSettings.Load();
-        GraphicsMode = _settings.GraphicsMode; ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
-        RefreshRate = _settings.RefreshRate; LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
+        // Defensive: if a persisted value isn't a mode we can actually offer (e.g. "DirectX" carried
+        // over onto macOS/Linux), fall back to OpenGL so the ComboBox isn't blank and nothing silently
+        // maps to a backend this platform can't use.
+        GraphicsMode = GraphicsModes.Contains(_settings.GraphicsMode) ? _settings.GraphicsMode : "OpenGL";
+        ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
+        LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
         ClosingBehavior = _settings.ClosingBehavior;
 
         StartClock();
-        _ = RefreshAsync();
+        // RunUpdateGameHandoffAsync does its own RefreshAsync() first thing, so skip the redundant
+        // concurrent call here when it's about to run — avoids two overlapping install-state probes racing
+        // to set the same observable properties.
+        if (!updateGame) _ = RefreshAsync();
         _ = LoadNewsAsync();
-        _ = CheckLauncherUpdateAsync();
+        StartLauncherUpdatePolling();
         StartStatusPolling();
+
+        // Game→launcher handoff: fire-and-forget like the startup tasks above — it drives
+        // Busy/Progress/StatusLine itself via the same UpdateGameAsync/PlayAsync the UI buttons use.
+        if (updateGame) _ = RunUpdateGameHandoffAsync();
     }
 
     partial void OnClientInstalledChanged(bool value) => OnPropertyChanged(nameof(PlayButtonText));
@@ -141,7 +192,6 @@ public partial class MainViewModel : ObservableObject
         if (_settings.Enable3D && ClientInstalled && !RemeshInstalled && !Busy)
             Notify("3D mode is on. Install the 3D mesh pack (Installer tab) for higher-quality models.");
     }
-    partial void OnRefreshRateChanged(int value) { _settings.RefreshRate = value; _settings.Save(); }
     partial void OnLiveNotificationsChanged(string value) { _settings.LiveNotifications = value == "Enabled"; _settings.Save(); }
     partial void OnClosingBehaviorChanged(string value) { _settings.ClosingBehavior = value; _settings.Save(); }
 
@@ -160,6 +210,12 @@ public partial class MainViewModel : ObservableObject
         catch (OperationCanceledException) { /* app is shutting down */ }
     }
 
+    /// <summary>Adaptive server-status poll. While the server is reachable it polls at the steady
+    /// cadence; the moment a check comes back offline/unreachable (or throws) it switches to the fast
+    /// cadence so a restart/deploy is picked up almost immediately, then relaxes back once it's up. A
+    /// manual Refresh nudges this loop (via <see cref="_pollNudge"/>) so the timer re-schedules instead
+    /// of firing a redundant poll on top of the manual one. Every wait uses the shutdown token so the
+    /// loop still ends cleanly on exit.</summary>
     private async void StartStatusPolling()
     {
         try
@@ -167,7 +223,35 @@ public partial class MainViewModel : ObservableObject
             while (!_shutdownCts.IsCancellationRequested)
             {
                 await LoadStatusAsync();
-                await Task.Delay(30_000, _shutdownCts.Token); // endpoint is cached ~10s server-side; 30s is plenty
+                // Server down/unreachable => poll fast until it returns; otherwise relax to steady.
+                var delay = ServerOnline ? StatusPollSteady : StatusPollFast;
+                await WaitOrNudgeAsync(delay);
+            }
+        }
+        catch (OperationCanceledException) { /* app is shutting down */ }
+    }
+
+    /// <summary>Waits up to <paramref name="delay"/>, but returns early if a manual Refresh signals the
+    /// nudge — so the next scheduled poll lands a full interval after the manual one, never on top of
+    /// it. Honours the shutdown token so cancellation still propagates.</summary>
+    private async Task WaitOrNudgeAsync(TimeSpan delay)
+    {
+        // WaitAsync returns true when the nudge fires (manual Refresh) and false on timeout (the normal
+        // "interval elapsed" path); either way we just loop and poll again. It throws only when the
+        // shutdown token is cancelled, which bubbles up to the caller to end the loop.
+        await _pollNudge.WaitAsync(delay, _shutdownCts.Token);
+    }
+
+    /// <summary>Periodic launcher self-update check so a launcher left open still learns about a new
+    /// version. Runs an initial check immediately, then every <see cref="LauncherUpdatePoll"/>.</summary>
+    private async void StartLauncherUpdatePolling()
+    {
+        try
+        {
+            while (!_shutdownCts.IsCancellationRequested)
+            {
+                await CheckLauncherUpdateAsync();
+                await Task.Delay(LauncherUpdatePoll, _shutdownCts.Token);
             }
         }
         catch (OperationCanceledException) { /* app is shutting down */ }
@@ -233,13 +317,10 @@ public partial class MainViewModel : ObservableObject
             GameUpdateAvailable = false;
             return;
         }
-        var server = NormalizeVersion(ServerGameVersion);
-        var local = NormalizeVersion(InstalledGameVersion);
-        // Missing local version => an old install from before version.txt => treat as needing an update.
-        GameUpdateAvailable = string.IsNullOrEmpty(local) || !string.Equals(local, server, StringComparison.OrdinalIgnoreCase);
+        // Shared seam (also used by the --update-game handoff's fast path) — missing local version =>
+        // an old install from before version.txt => treated as needing an update.
+        GameUpdateAvailable = DeltaUpdateEngine.NeedsUpdate(InstalledGameVersion, ServerGameVersion);
     }
-
-    private static string NormalizeVersion(string? v) => (v ?? "").Trim().TrimStart('v', 'V');
 
     /// <summary>Reads the client's stamped version (the release CI writes &lt;install&gt;/version.txt).</summary>
     private static string? ReadGameVersion(string? fsoDir)
@@ -264,6 +345,29 @@ public partial class MainViewModel : ObservableObject
     {
         try { UpdateVersion = await _selfUpdate.CheckForLauncherUpdateAsync(); }
         catch { /* offline */ }
+    }
+
+    /// <summary>Manual Refresh (button in the SERVER STATUS card): immediately re-checks server status
+    /// (which also recomputes the game-update state) and the launcher self-update, rather than waiting
+    /// for the next timer tick. Guarded by <see cref="IsRefreshing"/> so it can't overlap itself, and
+    /// nudges the poll loop so the automatic timer doesn't fire a second poll right behind this one.</summary>
+    [RelayCommand]
+    private async Task RefreshStatusAsync()
+    {
+        if (IsRefreshing) return;
+        IsRefreshing = true;
+        try
+        {
+            await LoadStatusAsync();               // refreshes server stats + recomputes game-update state
+            await CheckLauncherUpdateAsync();
+        }
+        finally
+        {
+            IsRefreshing = false;
+            // Wake the poll loop so its next interval is measured from now — avoids a redundant poll
+            // landing right on top of this manual one. Ignore if a nudge is already pending.
+            try { _pollNudge.Release(); } catch (SemaphoreFullException) { }
+        }
     }
 
     private void Notify(string message)
@@ -358,7 +462,6 @@ public partial class MainViewModel : ObservableObject
     {
         GraphicsMode = GraphicsMode == "DirectX" ? "dx" : GraphicsMode == "Software" ? "sw" : "ogl",
         Enable3D = ThreeDMode == "Enabled",
-        RefreshRate = RefreshRate,
         LanguageCode = 0,
         Windowed = true,
     };
@@ -370,10 +473,13 @@ public partial class MainViewModel : ObservableObject
     /// NEVER invoked. On ANY delta outcome other than a fully-applied chain (non-Windows, no/partial chain,
     /// hash mismatch, apply failure, or an install that predates version stamping) it falls back
     /// automatically to the full-package reinstall (download + atomic swap), which is always safe and
-    /// hash-verified and preserves user data. Which path ran is surfaced in the notification.</summary>
-    private async Task UpdateGameAsync()
+    /// hash-verified and preserves user data. Which path ran is surfaced in the notification.
+    /// Returns whether the update succeeded — used by <see cref="RunUpdateGameHandoffAsync"/> to decide
+    /// whether it's safe to auto-launch afterwards (a failure must leave the error up, not launch a
+    /// possibly-broken install).</summary>
+    private async Task<bool> UpdateGameAsync()
     {
-        if (Busy) return;
+        if (Busy) return false;
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify($"Updating the game to match the server ({ServerGameVersion})…");
         try
@@ -405,9 +511,43 @@ public partial class MainViewModel : ObservableObject
                     onUnsupported: code => Notify($"{code} not available."));
                 Notify("Game updated. Press PLAY to launch.");
             }
+            return true;
         }
-        catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
+        catch (Exception ex) { Notify("Game update failed: " + ex.Message); return false; }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+    }
+
+    /// <summary>
+    /// Entry point for the game→launcher handoff: on Windows, a Launcher-managed install whose client
+    /// detects a version mismatch starts the launcher with <c>--update-game</c> and exits (see
+    /// BUILD_AND_TEST.md → "Game → launcher handoff"). Runs the same version check → update → launch flow
+    /// PLAY/UPDATE GAME drive manually, automatically and exactly once (<see cref="_updateGameHandoffRan"/>
+    /// guards re-entry): refreshes install state, takes one deterministic read of the server's required
+    /// version, updates ONLY if needed (skips straight to launch when already current — no gratuitous
+    /// reinstall), and auto-launches the game on success. On failure (or if the client isn't installed at
+    /// all here) it leaves the normal error/status in the UI and does NOT retry or launch.
+    /// </summary>
+    public async Task RunUpdateGameHandoffAsync()
+    {
+        if (_updateGameHandoffRan) return;
+        _updateGameHandoffRan = true;
+
+        await RefreshAsync(); // populates ClientInstalled / _fsoPath / InstalledGameVersion
+        if (!ClientInstalled)
+        {
+            Notify("The game client isn't installed here yet — install it, then press PLAY.");
+            return;
+        }
+
+        await LoadStatusAsync(); // one deterministic fetch of the server's required version before deciding
+
+        // Skip the reinstall entirely when the install already matches what's required (fast path — see
+        // NeedsUpdate). When the status endpoint can't be reached we can't rule out a mismatch — that's
+        // exactly why the client handed off to us — so err on the side of updating rather than assuming OK.
+        bool needsUpdate = !StatsAvailable || DeltaUpdateEngine.NeedsUpdate(InstalledGameVersion, ServerGameVersion);
+
+        bool ok = !needsUpdate || await UpdateGameAsync();
+        if (ok) await PlayAsync();
     }
 
     [RelayCommand]
