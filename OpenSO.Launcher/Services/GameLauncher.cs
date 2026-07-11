@@ -21,8 +21,6 @@ public sealed class GameLauncher
         /// <summary>"ogl" (OpenGL), "dx" (DirectX, Windows only), or "sw" (software).</summary>
         public string GraphicsMode { get; set; } = "ogl";
         public bool Enable3D { get; set; } = false;
-        /// <summary>Refresh-rate hint passed as -hz. 0 = let the game decide.</summary>
-        public int RefreshRate { get; set; } = 60;
         /// <summary>Game language code (0 = English), passed as -lang.</summary>
         public int LanguageCode { get; set; } = 0;
         public bool Windowed { get; set; } = true;
@@ -99,7 +97,8 @@ public sealed class GameLauncher
         args.Add($"-{gfx}");
 
         if (o.Enable3D && o.GraphicsMode != "sw") args.Add("-3d");
-        if (o.RefreshRate > 0) args.Add($"-hz{o.RefreshRate}");
+        // No -hz: the client runs at the monitor/vsync rate (render is decoupled from the sim), so a
+        // refresh-rate hint is vestigial. Omitting it lets the game pick the display's true rate.
         return args;
     }
 

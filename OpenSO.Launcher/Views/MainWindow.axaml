@@ -126,9 +126,16 @@
             <!-- LIVE SERVER STATS (polled from /userapi/status) -->
             <Border Classes="card">
               <StackPanel Spacing="14">
-                <Grid ColumnDefinitions="*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto">
                   <TextBlock Grid.Column="0" Classes="label" Text="SERVER STATUS" VerticalAlignment="Center"/>
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                  <!-- Manual refresh: forces an immediate status + update check. Shows '…' while a
+                       refresh is in flight; disabled meanwhile so it can't double-fire. -->
+                  <Button Grid.Column="1" HorizontalAlignment="Left" Margin="10,0,0,0" Padding="8,2" CornerRadius="6"
+                          Command="{Binding RefreshStatusCommand}" IsEnabled="{Binding !IsRefreshing}"
+                          Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}"
+                          FontSize="11" FontWeight="SemiBold" Cursor="Hand"
+                          Content="{Binding RefreshButtonText}"/>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Good}" VerticalAlignment="Center" IsVisible="{Binding ServerOnline}"/>
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Bad}" VerticalAlignment="Center" IsVisible="{Binding !ServerOnline}"/>
                     <TextBlock Text="{Binding ServerName}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -273,17 +280,12 @@
                 <StackPanel Spacing="5">
                   <TextBlock Text="Graphics Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding GraphicsModes}" SelectedItem="{Binding GraphicsMode}" HorizontalAlignment="Stretch"/>
-                  <TextBlock Classes="sub" Text="DirectX usually performs best on Windows; macOS/Linux use OpenGL."/>
+                  <TextBlock Classes="sub" Text="{Binding GraphicsModeHint}"/>
                 </StackPanel>
                 <StackPanel Spacing="5">
                   <TextBlock Text="3D Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding ThreeDMode}" HorizontalAlignment="Stretch"/>
                   <TextBlock Classes="sub" Text="Best with the 3D Mesh Pack — install it from the Installer tab for higher-quality models."/>
-                </StackPanel>
-                <StackPanel Spacing="5">
-                  <TextBlock Text="Refresh rate (Hz)" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
-                  <NumericUpDown Value="{Binding RefreshRate}" Minimum="30" Maximum="360" Increment="1" FormatString="0"/>
-                  <TextBlock Classes="sub" Text="Higher refresh rates give smoother motion (the render rate is decoupled from the sim)."/>
                 </StackPanel>
               </StackPanel>
             </Border>
