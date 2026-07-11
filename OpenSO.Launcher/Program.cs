@@ -7,6 +7,10 @@ internal static class Program
     [System.STAThread]
     public static void Main(string[] args)
     {
+        // args flows through to App.OnFrameworkInitializationCompleted as
+        // IClassicDesktopStyleApplicationLifetime.Args, where LauncherArgs.HasUpdateGame checks for
+        // --update-game (the game client's version-mismatch handoff — see BUILD_AND_TEST.md → "Game →
+        // launcher handoff"). No parsing needed here; StartWithClassicDesktopLifetime wires it up.
         var exitCode = BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
 
         // Backstop: closing the window must always end the launcher process. By the time

@@ -26,6 +26,8 @@
     <Compile Include="..\OpenSO.Launcher\Services\SelfUpdateService.cs" Link="src\SelfUpdateService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Extraction\ArchivePathGuard.cs" Link="src\ArchivePathGuard.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\LauncherHandoff.cs" Link="src\LauncherHandoff.cs" />
+    <Compile Include="..\OpenSO.Launcher\LauncherArgs.cs" Link="src\LauncherArgs.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\FsoInstaller.cs" Link="src\FsoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\TsoInstaller.cs" Link="src\TsoInstaller.cs" />

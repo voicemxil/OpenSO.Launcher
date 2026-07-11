@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Threading.Tasks;
+using OpenSO.Launcher;
 using OpenSO.Launcher.Models;
 using OpenSO.Launcher.Services;
 using OpenSO.Launcher.Services.Extraction;
@@ -80,6 +81,15 @@ internal static class Program
         Test("DeltaUpdateEngine never overwrites or removes user-owned files (config/NLog/saves)", TestDeltaPreservesUserData);
         await Test("DeltaUpdateEngine SHA-256 mismatch on a hop is refused before mutation → full fallback", TestDeltaSha256MismatchFallsBack);
         await Test("Full-package upgrade A→B via fixture manifest preserves user data (Phase-3 upgrade test)", TestFullPackageUpgradePreservesUserData);
+
+        // PHASE 4 — game→launcher handoff (openso-launcher.path marker + --update-game).
+        Test("LauncherHandoff.WriteMarker writes a single-line UTF-8 marker and refreshes a stale one", TestLauncherHandoffMarkerWritesAndRefreshes);
+        Test("LauncherHandoff.WriteMarker swallows a write failure instead of throwing", TestLauncherHandoffMarkerSwallowsWriteFailure);
+        Test("LauncherArgs.HasUpdateGame recognizes --update-game and ignores unknown args", TestLauncherArgsRecognizesUpdateGame);
+        Test("DeltaUpdateEngine.NeedsUpdate decides update-needed from two version strings", TestNeedsUpdateDecisionLogic);
+        Test("GameLauncher.Launch refreshes the handoff marker on every launch attempt", TestGameLauncherRefreshesMarkerOnLaunchAttempt);
+        await Test("FsoInstaller.InstallAsync writes the handoff marker after a successful full install", TestFsoInstallWritesHandoffMarker);
+        await Test("DeltaUpdateEngine.TryDeltaUpdateAsync writes the handoff marker after a successful delta", TestDeltaUpdateWritesHandoffMarker);
 
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
@@ -1123,6 +1133,163 @@ internal static class Program
             Assert(File.ReadAllText(Path.Combine(install, "newB.dat")) == "B", "the new release's game files are installed");
             Assert(File.ReadAllText(Path.Combine(install, "Content", "config.ini")) == "user config", "the user's config.ini is preserved over the shipped default");
             Assert(File.ReadAllText(Path.Combine(install, "Content", "saves", "s.dat")) == "user save", "the user's save is preserved across the full upgrade");
+        }
+        finally { stopZip(); stopMan(); }
+    }
+
+    // ---- PHASE 4: game→launcher handoff (openso-launcher.path marker + --update-game) ----
+
+    private static void TestLauncherHandoffMarkerWritesAndRefreshes()
+    {
+        var dir = NewTmp();
+        LauncherHandoff.WriteMarker(dir);
+
+        var markerPath = Path.Combine(dir, LauncherHandoff.MarkerFileName);
+        Assert(File.Exists(markerPath), "the marker file is created in the game install directory");
+        var expected = LauncherHandoff.CurrentLauncherPath();
+        Assert(!string.IsNullOrEmpty(expected), "this launcher's own process path can be determined under the test host");
+        var content = File.ReadAllText(markerPath);
+        Assert(content == expected, "the marker holds exactly this launcher's executable path");
+        Assert(!content.Contains('\n') && !content.Contains('\r'), "the marker is a single line with no embedded newline");
+
+        // Regression guard: File.ReadAllText silently strips a BOM, which would hide this. The game's own
+        // reader only does a plain string.Trim() (char.IsWhiteSpace('﻿') is false in .NET), so a BOM
+        // preamble would survive AS a literal leading character there and break File.Exists/Directory.Exists
+        // on an otherwise-correct path. Check the RAW bytes: must be exactly the path's UTF-8 bytes, no
+        // EF BB BF preamble.
+        var rawBytes = File.ReadAllBytes(markerPath);
+        Assert(!(rawBytes.Length >= 3 && rawBytes[0] == 0xEF && rawBytes[1] == 0xBB && rawBytes[2] == 0xBF),
+            "the marker is written WITHOUT a UTF-8 byte-order-mark");
+        Assert(rawBytes.SequenceEqual(System.Text.Encoding.UTF8.GetBytes(expected!)),
+            "the marker's raw bytes are exactly the path's UTF-8 bytes (no BOM, no trailing newline)");
+
+        // Refresh: seed a stale marker (as if written by an older/different launcher path), then re-write —
+        // the helper must overwrite it with the current path, not append to or ignore the stale one.
+        File.WriteAllText(markerPath, "C:\\some\\old\\stale\\OpenSO.Launcher.exe");
+        LauncherHandoff.WriteMarker(dir);
+        Assert(File.ReadAllText(markerPath) == expected, "re-writing refreshes a stale marker to the current launcher path");
+    }
+
+    private static void TestLauncherHandoffMarkerSwallowsWriteFailure()
+    {
+        var tmp = NewTmp();
+        // A FILE sitting where the "game install directory" would be: Directory.CreateDirectory throws
+        // because a non-directory entry already occupies that path — an unwritable-dir stand-in that
+        // works identically on every OS (no permission-bit fiddling needed).
+        var blocked = Path.Combine(tmp, "not-a-directory");
+        File.WriteAllText(blocked, "this is a file, not a game install directory");
+
+        // Must not throw — a marker-write failure must never break an install/update/launch.
+        LauncherHandoff.WriteMarker(blocked);
+
+        Assert(File.ReadAllText(blocked) == "this is a file, not a game install directory",
+            "the pre-existing file is untouched — the failed write did not corrupt it");
+    }
+
+    private static void TestLauncherArgsRecognizesUpdateGame()
+    {
+        Assert(LauncherArgs.HasUpdateGame(new[] { "--update-game" }), "recognizes the flag alone");
+        Assert(LauncherArgs.HasUpdateGame(new[] { "--some-other-flag", "--update-game", "positional" }),
+            "recognizes the flag among other/unknown args");
+        Assert(LauncherArgs.HasUpdateGame(new[] { "--UPDATE-GAME" }), "the flag match is case-insensitive");
+        Assert(!LauncherArgs.HasUpdateGame(new[] { "--some-other-flag" }), "unrelated/unknown args are ignored");
+        Assert(!LauncherArgs.HasUpdateGame(Array.Empty<string>()), "no args means no flag");
+        Assert(!LauncherArgs.HasUpdateGame(null), "a null args array is treated as no flag (never throws)");
+    }
+
+    private static void TestNeedsUpdateDecisionLogic()
+    {
+        Assert(DeltaUpdateEngine.NeedsUpdate("v0.2.0", "v0.2.1"), "a version mismatch needs an update");
+        Assert(!DeltaUpdateEngine.NeedsUpdate("v0.2.1", "v0.2.1"), "a matching version needs no update");
+        Assert(!DeltaUpdateEngine.NeedsUpdate("V0.2.1", "v0.2.1"), "the comparison ignores a leading 'v'/case (reuses VersionEquals)");
+        Assert(DeltaUpdateEngine.NeedsUpdate(null, "v0.2.1"), "a missing installed version (pre-version.txt install) needs an update");
+        Assert(DeltaUpdateEngine.NeedsUpdate("", "v0.2.1"), "an empty installed version needs an update");
+        Assert(!DeltaUpdateEngine.NeedsUpdate("v0.2.0", null), "an unknown required version can't be said to need an update");
+        Assert(!DeltaUpdateEngine.NeedsUpdate("v0.2.0", ""), "an empty required version can't be said to need an update");
+    }
+
+    private static void TestGameLauncherRefreshesMarkerOnLaunchAttempt()
+    {
+        // An existing but EMPTY install dir (no game exe inside): the launch attempt still fails clearly
+        // (same contract as TestLaunchMissing), but the marker refresh happens before that failure — it
+        // only needs a real install DIRECTORY, not a working exe, so an older-launcher install gets
+        // covered by PLAY even before anything else about it is fixed.
+        var dir = NewTmp();
+        var launcher = new GameLauncher();
+        bool threw = false;
+        try { launcher.Launch(dir); }
+        catch (FileNotFoundException) { threw = true; }
+        Assert(threw, "the launch attempt still fails clearly when the game exe itself is missing");
+
+        var markerPath = Path.Combine(dir, LauncherHandoff.MarkerFileName);
+        Assert(File.Exists(markerPath), "the handoff marker is written even though the launch attempt failed");
+        Assert(File.ReadAllText(markerPath) == LauncherHandoff.CurrentLauncherPath(),
+            "the marker names this launcher's own executable path");
+    }
+
+    private static async Task TestFsoInstallWritesHandoffMarker()
+    {
+        var rid = FsoInstaller.CurrentRid();
+        var tmp = NewTmp();
+        var install = Path.Combine(tmp, "OpenSO", "FSO");
+
+        var stage = Path.Combine(tmp, "clientFresh");
+        Directory.CreateDirectory(Path.Combine(stage, "Content"));
+        File.WriteAllText(Path.Combine(stage, "OpenSO.exe"), "x");
+        File.WriteAllText(Path.Combine(stage, "OpenSO.dll"), "x");
+        File.WriteAllText(Path.Combine(stage, "hostfxr.dll"), "x");
+        File.WriteAllText(Path.Combine(stage, "version.txt"), "v1.0.0");
+        for (int i = 0; i < 90; i++) File.WriteAllText(Path.Combine(stage, $"pad{i}.dll"), "x");
+        var zipPath = Path.Combine(tmp, "clientFresh.zip");
+        ZipFile.CreateFromDirectory(stage, zipPath);
+        var zipBytes = File.ReadAllBytes(zipPath);
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(zipBytes)).ToLowerInvariant();
+
+        var (zipUrl, stopZip) = await LocalServer.ServeBytes(zipBytes);
+        var manifest = "{\"schemaVersion\":1,\"version\":\"v1.0.0\",\"clients\":{\"" + rid +
+            "\":{\"full\":{\"url\":\"" + zipUrl + "\",\"sha256\":\"" + sha + "\"}}}}";
+        var (manUrl, stopMan) = await LocalServer.ServeBytes(System.Text.Encoding.UTF8.GetBytes(manifest));
+        try
+        {
+            var cfg = new LauncherConfig { ClientManifestUrl = manUrl };
+            await new FsoInstaller(cfg).InstallAsync(install, new Progress<ProgressReport>());
+
+            var markerPath = Path.Combine(install, LauncherHandoff.MarkerFileName);
+            Assert(File.Exists(markerPath), "a successful full install writes the launcher handoff marker into the install root");
+            Assert(File.ReadAllText(markerPath) == LauncherHandoff.CurrentLauncherPath(),
+                "the marker names this launcher's own executable path");
+        }
+        finally { stopZip(); stopMan(); }
+    }
+
+    private static async Task TestDeltaUpdateWritesHandoffMarker()
+    {
+        var tmp = NewTmp();
+        var install = Path.Combine(tmp, "install");
+        Directory.CreateDirectory(install);
+        File.WriteAllText(Path.Combine(install, "shared.dat"), "A");
+        File.WriteAllText(Path.Combine(install, "version.txt"), "vA");
+
+        var deltaZipBytes = File.ReadAllBytes(MakeZipRaw(tmp, "hop.zip", ("shared.dat", "B", null), ("version.txt", "vB", null)));
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(deltaZipBytes)).ToLowerInvariant();
+        var (zipUrl, stopZip) = await LocalServer.ServeBytes(deltaZipBytes);
+        var manifestJson = "{\"schemaVersion\":1,\"version\":\"vB\",\"clients\":{\"win-x64\":{\"deltas\":[" +
+            "{\"from\":\"vA\",\"url\":\"" + zipUrl + "\",\"sha256\":\"" + sha + "\"}]}}}";
+        var (manUrl, stopMan) = await LocalServer.ServeBytes(System.Text.Encoding.UTF8.GetBytes(manifestJson));
+        try
+        {
+            // ClientManifestUrl must carry the /releases/latest/download/ shape so per-tag derivation
+            // resolves back to this (path-agnostic) local manifest server — same trick as
+            // TestDeltaSha256MismatchFallsBack.
+            var cfg = new LauncherConfig { ClientManifestUrl = manUrl.Replace("file.bin", "releases/latest/download/openso-manifest.json") };
+            var engine = new DeltaUpdateEngine(cfg);
+            var applied = await engine.TryDeltaUpdateAsync(install, "vA", "vB", "win-x64", new Progress<ProgressReport>());
+
+            Assert(applied, "the single-hop delta applies successfully");
+            var markerPath = Path.Combine(install, LauncherHandoff.MarkerFileName);
+            Assert(File.Exists(markerPath), "a successful delta update writes the launcher handoff marker");
+            Assert(File.ReadAllText(markerPath) == LauncherHandoff.CurrentLauncherPath(),
+                "the marker names this launcher's own executable path");
         }
         finally { stopZip(); stopMan(); }
     }

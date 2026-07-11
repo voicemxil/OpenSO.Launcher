@@ -38,6 +38,13 @@ public sealed class GameLauncher
         if (string.IsNullOrWhiteSpace(installDir) || !Directory.Exists(installDir))
             throw new DirectoryNotFoundException($"OpenSO install not found at: {installDir}");
 
+        // Game→launcher handoff: refresh the marker on every launch ATTEMPT against a real install dir —
+        // this is what gets an install made by an OLDER launcher (before this marker existed) covered the
+        // first time the user presses PLAY, without waiting for the next update. Best-effort (see
+        // LauncherHandoff) and deliberately unconditional on what follows: even if the exe itself turns
+        // out to be missing below, the directory IS a real FSO install and the marker belongs there.
+        LauncherHandoff.WriteMarker(installDir);
+
         var args = BuildArgs(options);
 
         ProcessStartInfo psi;

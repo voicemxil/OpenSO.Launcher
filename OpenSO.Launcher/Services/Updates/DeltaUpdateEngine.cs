@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenSO.Launcher.Models;
+using OpenSO.Launcher.Services; // LauncherHandoff — the game→launcher marker refresh on a successful delta
 using OpenSO.Launcher.Services.Extraction;
 
 namespace OpenSO.Launcher.Services.Updates;
@@ -124,6 +125,9 @@ public sealed class DeltaUpdateEngine
 
                 progress.Report(new ProgressReport("delta", 0.55, "Applying incremental update(s)…"));
                 var r = ApplyChain(installDir, staged, Scale(progress, "delta", 0.55, 1.0), ct);
+                // Game→launcher handoff: refresh the marker on every successful delta so the client can
+                // keep finding this launcher (see LauncherHandoff). Best-effort; never affects the result.
+                if (r.Success) LauncherHandoff.WriteMarker(installDir);
                 return r.Success;
             }
             finally { foreach (var t in temps) TryDelete(t); }
@@ -548,6 +552,21 @@ public sealed class DeltaUpdateEngine
 
     internal static bool VersionEquals(string? a, string? b) =>
         NormalizeVersion(a).Equals(NormalizeVersion(b), StringComparison.Ordinal);
+
+    /// <summary>
+    /// True when <paramref name="installedVersion"/> doesn't match <paramref name="requiredVersion"/> — or
+    /// is missing entirely (an install predating version stamping) — and therefore needs updating before
+    /// it can connect. Shared testable seam for the login-version check (MainViewModel.RecomputeGameUpdate)
+    /// and the <c>--update-game</c> handoff's fast path (skip the delta/full pipeline entirely when the
+    /// install is already current — see MainViewModel.RunUpdateGameHandoffAsync). A blank/unknown
+    /// <paramref name="requiredVersion"/> can't be compared against, so it's treated as "no update needed"
+    /// rather than guessing.
+    /// </summary>
+    public static bool NeedsUpdate(string? installedVersion, string? requiredVersion)
+    {
+        if (string.IsNullOrWhiteSpace(requiredVersion)) return false;
+        return string.IsNullOrWhiteSpace(installedVersion) || !VersionEquals(installedVersion, requiredVersion);
+    }
 
     private static string TempPath(string prefix, string ext) =>
         Path.Combine(Path.GetTempPath(), $"{prefix}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}{ext}");

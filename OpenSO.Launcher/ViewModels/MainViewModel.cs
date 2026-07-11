@@ -34,6 +34,10 @@ public partial class MainViewModel : ObservableObject
     /// background work outlives the window (see App.OnFrameworkInitializationCompleted).</summary>
     private readonly CancellationTokenSource _shutdownCts = new();
 
+    /// <summary>Guards <see cref="RunUpdateGameHandoffAsync"/> so the <c>--update-game</c> flag can only
+    /// ever trigger the update-then-launch flow once per process, even if something re-entered it.</summary>
+    private bool _updateGameHandoffRan;
+
     /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
     public void Shutdown()
     {
@@ -111,7 +115,10 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";
 
-    public MainViewModel()
+    /// <param name="updateGame">True when the launcher was started with <c>--update-game</c> — the game
+    /// client's handoff on a version mismatch (see BUILD_AND_TEST.md → "Game → launcher handoff"). When
+    /// set, <see cref="RunUpdateGameHandoffAsync"/> runs automatically once startup is under way.</param>
+    public MainViewModel(bool updateGame = false)
     {
         _installState = new InstallStateService(_config);
         _orchestrator = new InstallOrchestrator(_config, _installState);
@@ -124,10 +131,17 @@ public partial class MainViewModel : ObservableObject
         ClosingBehavior = _settings.ClosingBehavior;
 
         StartClock();
-        _ = RefreshAsync();
+        // RunUpdateGameHandoffAsync does its own RefreshAsync() first thing, so skip the redundant
+        // concurrent call here when it's about to run — avoids two overlapping install-state probes racing
+        // to set the same observable properties.
+        if (!updateGame) _ = RefreshAsync();
         _ = LoadNewsAsync();
         _ = CheckLauncherUpdateAsync();
         StartStatusPolling();
+
+        // Game→launcher handoff: fire-and-forget like the startup tasks above — it drives
+        // Busy/Progress/StatusLine itself via the same UpdateGameAsync/PlayAsync the UI buttons use.
+        if (updateGame) _ = RunUpdateGameHandoffAsync();
     }
 
     partial void OnClientInstalledChanged(bool value) => OnPropertyChanged(nameof(PlayButtonText));
@@ -233,13 +247,10 @@ public partial class MainViewModel : ObservableObject
             GameUpdateAvailable = false;
             return;
         }
-        var server = NormalizeVersion(ServerGameVersion);
-        var local = NormalizeVersion(InstalledGameVersion);
-        // Missing local version => an old install from before version.txt => treat as needing an update.
-        GameUpdateAvailable = string.IsNullOrEmpty(local) || !string.Equals(local, server, StringComparison.OrdinalIgnoreCase);
+        // Shared seam (also used by the --update-game handoff's fast path) — missing local version =>
+        // an old install from before version.txt => treated as needing an update.
+        GameUpdateAvailable = DeltaUpdateEngine.NeedsUpdate(InstalledGameVersion, ServerGameVersion);
     }
-
-    private static string NormalizeVersion(string? v) => (v ?? "").Trim().TrimStart('v', 'V');
 
     /// <summary>Reads the client's stamped version (the release CI writes &lt;install&gt;/version.txt).</summary>
     private static string? ReadGameVersion(string? fsoDir)
@@ -370,10 +381,13 @@ public partial class MainViewModel : ObservableObject
     /// NEVER invoked. On ANY delta outcome other than a fully-applied chain (non-Windows, no/partial chain,
     /// hash mismatch, apply failure, or an install that predates version stamping) it falls back
     /// automatically to the full-package reinstall (download + atomic swap), which is always safe and
-    /// hash-verified and preserves user data. Which path ran is surfaced in the notification.</summary>
-    private async Task UpdateGameAsync()
+    /// hash-verified and preserves user data. Which path ran is surfaced in the notification.
+    /// Returns whether the update succeeded — used by <see cref="RunUpdateGameHandoffAsync"/> to decide
+    /// whether it's safe to auto-launch afterwards (a failure must leave the error up, not launch a
+    /// possibly-broken install).</summary>
+    private async Task<bool> UpdateGameAsync()
     {
-        if (Busy) return;
+        if (Busy) return false;
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify($"Updating the game to match the server ({ServerGameVersion})…");
         try
@@ -405,9 +419,43 @@ public partial class MainViewModel : ObservableObject
                     onUnsupported: code => Notify($"{code} not available."));
                 Notify("Game updated. Press PLAY to launch.");
             }
+            return true;
         }
-        catch (Exception ex) { Notify("Game update failed: " + ex.Message); }
+        catch (Exception ex) { Notify("Game update failed: " + ex.Message); return false; }
         finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+    }
+
+    /// <summary>
+    /// Entry point for the game→launcher handoff: on Windows, a Launcher-managed install whose client
+    /// detects a version mismatch starts the launcher with <c>--update-game</c> and exits (see
+    /// BUILD_AND_TEST.md → "Game → launcher handoff"). Runs the same version check → update → launch flow
+    /// PLAY/UPDATE GAME drive manually, automatically and exactly once (<see cref="_updateGameHandoffRan"/>
+    /// guards re-entry): refreshes install state, takes one deterministic read of the server's required
+    /// version, updates ONLY if needed (skips straight to launch when already current — no gratuitous
+    /// reinstall), and auto-launches the game on success. On failure (or if the client isn't installed at
+    /// all here) it leaves the normal error/status in the UI and does NOT retry or launch.
+    /// </summary>
+    public async Task RunUpdateGameHandoffAsync()
+    {
+        if (_updateGameHandoffRan) return;
+        _updateGameHandoffRan = true;
+
+        await RefreshAsync(); // populates ClientInstalled / _fsoPath / InstalledGameVersion
+        if (!ClientInstalled)
+        {
+            Notify("The game client isn't installed here yet — install it, then press PLAY.");
+            return;
+        }
+
+        await LoadStatusAsync(); // one deterministic fetch of the server's required version before deciding
+
+        // Skip the reinstall entirely when the install already matches what's required (fast path — see
+        // NeedsUpdate). When the status endpoint can't be reached we can't rule out a mismatch — that's
+        // exactly why the client handed off to us — so err on the side of updating rather than assuming OK.
+        bool needsUpdate = !StatsAvailable || DeltaUpdateEngine.NeedsUpdate(InstalledGameVersion, ServerGameVersion);
+
+        bool ok = !needsUpdate || await UpdateGameAsync();
+        if (ok) await PlayAsync();
     }
 
     [RelayCommand]

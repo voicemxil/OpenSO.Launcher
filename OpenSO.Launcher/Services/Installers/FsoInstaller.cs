@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using OpenSO.Launcher.Models;
+using OpenSO.Launcher.Services; // LauncherHandoff — the game→launcher marker written on a successful install
 using OpenSO.Launcher.Services.Extraction;
 
 namespace OpenSO.Launcher.Services.Installers;
@@ -97,6 +98,10 @@ public sealed class FsoInstaller : IComponentInstaller
             // Step 5: register the install.
             progress.Report(new ProgressReport("client", 0.97, "Registering install…"));
             _registerInstall?.Invoke(Code, installPath);
+
+            // Game→launcher handoff: (re)write the marker so the client can find this launcher on a
+            // future version mismatch (see LauncherHandoff). Best-effort; never affects install success.
+            LauncherHandoff.WriteMarker(installPath);
 
             progress.Report(new ProgressReport("client", 1.0, "Installation finished."));
         }
