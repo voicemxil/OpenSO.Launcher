@@ -129,12 +129,17 @@
                 <Grid ColumnDefinitions="Auto,*,Auto">
                   <TextBlock Grid.Column="0" Classes="label" Text="SERVER STATUS" VerticalAlignment="Center"/>
                   <!-- Manual refresh: forces an immediate status + update check. Shows '…' while a
-                       refresh is in flight; disabled meanwhile so it can't double-fire. -->
-                  <Button Grid.Column="1" HorizontalAlignment="Left" Margin="10,0,0,0" Padding="8,2" CornerRadius="6"
-                          Command="{Binding RefreshStatusCommand}" IsEnabled="{Binding !IsRefreshing}"
-                          Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}"
-                          FontSize="11" FontWeight="SemiBold" Cursor="Hand"
-                          Content="{Binding RefreshButtonText}"/>
+                       refresh is in flight; disabled meanwhile so it can't double-fire. The caption next
+                       to it shows when the stats on screen were last successfully loaded. -->
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="10,0,0,0" VerticalAlignment="Center">
+                    <Button Padding="8,2" CornerRadius="6"
+                            Command="{Binding RefreshStatusCommand}" IsEnabled="{Binding !IsRefreshing}"
+                            Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}"
+                            FontSize="11" FontWeight="SemiBold" Cursor="Hand"
+                            Content="{Binding RefreshButtonText}"/>
+                    <TextBlock Text="{Binding LastUpdatedText}" Foreground="{DynamicResource Ink3}"
+                               FontSize="11" VerticalAlignment="Center"/>
+                  </StackPanel>
                   <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Good}" VerticalAlignment="Center" IsVisible="{Binding ServerOnline}"/>
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Bad}" VerticalAlignment="Center" IsVisible="{Binding !ServerOnline}"/>

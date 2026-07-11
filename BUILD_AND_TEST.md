@@ -250,6 +250,25 @@ the normal progress UI), and **auto-launches the game on success**. When the ins
 skips straight to launch — **no unnecessary reinstall**. On failure it surfaces the normal error in the UI,
 **stays open**, and does **not** retry or loop.
 
+## Server status polling & manual refresh
+
+`MainViewModel` runs two independent background polls (adaptive server status, 3s/10s; launcher self-update,
+every 6h) plus an on-demand Refresh button on the SERVER STATUS card. Refresh doesn't just nudge those loops
+to run sooner — it **explicitly** re-checks both kinds of update: it reloads server status (which recomputes
+the game-update state from live data) and, only when the status endpoint didn't answer, falls back to a
+lightweight version-only fetch of the client manifest (`FsoInstaller.FetchManifestVersionAsync`) so the "a
+game update is required" banner stays truthful instead of silently going quiet while the status API is
+unreachable (`DeltaUpdateEngine.ShouldFallBackToManifest` is the testable decision of when that fallback is
+worth attempting); it also runs the launcher self-update check via the exact code path the 6h poll uses, so
+either one shows the same banner. Both network calls run concurrently so the common path isn't slowed down.
+`PollGate` (Wait/Nudge + TryEnter/Release) is the shared, testable primitive both polls use to avoid firing
+redundantly right behind a manual Refresh; `IsRefreshing` always clears in a `finally` even when everything
+is offline (every check swallows its own errors — no exceptions, no error spam). The card also shows when the
+stats on screen were last **successfully** loaded (`LastUpdatedText`, formatted by
+`StatusDisplay.FormatLastUpdated` — an absolute local time, not a relative "ago" string, so it needs no extra
+UI timer to stay honest); a failed/offline load never advances it, so a stale timestamp next to "Offline" is
+an accurate combination, not a bug.
+
 ## What works today (tested)
 
 - Resilient downloads (retry/resume/progress, MD5 + SHA-256 verification) — `DownloadService`
@@ -266,6 +285,12 @@ skips straight to launch — **no unnecessary reinstall**. On failure it surface
   itself (the auto-run-on-startup wiring) is **not** headlessly tested — `MainViewModel`/`App` need the
   Avalonia UI loop and aren't linked into `OpenSO.Launcher.Tests`; it's exercised by running the launcher
   with `--update-game` against a real install.
+- Manual-refresh hardening (see "Server status polling & manual refresh" above): the manifest-fallback
+  decision (`DeltaUpdateEngine.ShouldFallBackToManifest`), the manifest version-only parse/fetch
+  (`FsoInstaller.ParseManifestVersion` / `FetchManifestVersionAsync`), the last-updated caption formatter
+  (`StatusDisplay.FormatLastUpdated`), and the poll/reentrancy primitive (`PollGate`) are all headlessly
+  tested. `MainViewModel.RefreshStatusAsync`/`RecheckGameUpdateAsync` themselves are **not** — same
+  Avalonia-UI-loop reason as `RunUpdateGameHandoffAsync` above.
 
 ## Still to port (next slices)
 

@@ -50,9 +50,18 @@ public partial class MainViewModel : ObservableObject
     /// learns about updates (the check is startup-only otherwise).</summary>
     private static readonly TimeSpan LauncherUpdatePoll = TimeSpan.FromHours(6);
 
-    /// <summary>Signalled to wake the status-poll loop early (e.g. after a manual Refresh) so it
-    /// re-schedules instead of firing a second, overlapping poll on top of the manual one.</summary>
-    private readonly SemaphoreSlim _pollNudge = new(0, 1);
+    /// <summary>Coordinates the adaptive status-poll loop with a manual Refresh: <c>Nudge()</c>/<c>WaitAsync()</c>
+    /// wake the loop early after a manual refresh so it re-schedules instead of firing a second, overlapping
+    /// poll right on top of the manual one (see <see cref="WaitOrNudgeAsync"/>).</summary>
+    private readonly PollGate _statusPollGate = new();
+
+    /// <summary>Coordinates the 6-hour launcher self-update poll with Refresh's own on-demand check of the
+    /// same feed (see <see cref="CheckLauncherUpdateAsync"/>): TryEnter/Release ensure the poll and a
+    /// manual Refresh never hit the update feed concurrently (the loser just skips — the winner's result
+    /// still lands in <see cref="UpdateVersion"/>), and Nudge()/WaitAsync() defer the poll's next automatic
+    /// tick a full interval after a manual check so it never fires — and re-prompts — right behind one
+    /// Refresh just did.</summary>
+    private readonly PollGate _launcherUpdateGate = new();
 
     /// <summary>Stops all periodic background work. Called by App when the Avalonia lifetime exits.</summary>
     public void Shutdown()
@@ -112,6 +121,13 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _serverTimeText = "—";
     private DateTime _serverTimeUtc;
     private DateTime _serverTimeSyncedAtUtc;
+
+    /// <summary>Caption next to the Refresh button: when the stats currently on screen were last
+    /// SUCCESSFULLY loaded (set in <see cref="LoadStatusAsync"/> only on success — a failed/offline load
+    /// leaves it as-is, so it always honestly reflects the age of what's displayed). See
+    /// <see cref="StatusDisplay.FormatLastUpdated"/> for the pure formatting.</summary>
+    [ObservableProperty] private string _lastUpdatedText = StatusDisplay.FormatLastUpdated(null);
+    private DateTime? _lastStatusSuccessAtLocal;
     public ObservableCollection<TopLot> TopLots { get; } = new();
 
     public string PlayButtonText => !ClientInstalled ? "INSTALL" : GameUpdateAvailable ? "UPDATE GAME" : "PLAY";
@@ -213,7 +229,7 @@ public partial class MainViewModel : ObservableObject
     /// <summary>Adaptive server-status poll. While the server is reachable it polls at the steady
     /// cadence; the moment a check comes back offline/unreachable (or throws) it switches to the fast
     /// cadence so a restart/deploy is picked up almost immediately, then relaxes back once it's up. A
-    /// manual Refresh nudges this loop (via <see cref="_pollNudge"/>) so the timer re-schedules instead
+    /// manual Refresh nudges this loop (via <see cref="_statusPollGate"/>) so the timer re-schedules instead
     /// of firing a redundant poll on top of the manual one. Every wait uses the shutdown token so the
     /// loop still ends cleanly on exit.</summary>
     private async void StartStatusPolling()
@@ -239,11 +255,14 @@ public partial class MainViewModel : ObservableObject
         // WaitAsync returns true when the nudge fires (manual Refresh) and false on timeout (the normal
         // "interval elapsed" path); either way we just loop and poll again. It throws only when the
         // shutdown token is cancelled, which bubbles up to the caller to end the loop.
-        await _pollNudge.WaitAsync(delay, _shutdownCts.Token);
+        await _statusPollGate.WaitAsync(delay, _shutdownCts.Token);
     }
 
     /// <summary>Periodic launcher self-update check so a launcher left open still learns about a new
-    /// version. Runs an initial check immediately, then every <see cref="LauncherUpdatePoll"/>.</summary>
+    /// version. Runs an initial check immediately, then every <see cref="LauncherUpdatePoll"/> — unless a
+    /// manual Refresh's own check (see <see cref="RefreshStatusAsync"/>) nudges this wait early, in which
+    /// case the next tick is measured from the manual check instead, so it never fires again right behind
+    /// one Refresh just did.</summary>
     private async void StartLauncherUpdatePolling()
     {
         try
@@ -251,7 +270,7 @@ public partial class MainViewModel : ObservableObject
             while (!_shutdownCts.IsCancellationRequested)
             {
                 await CheckLauncherUpdateAsync();
-                await Task.Delay(LauncherUpdatePoll, _shutdownCts.Token);
+                await _launcherUpdateGate.WaitAsync(LauncherUpdatePoll, _shutdownCts.Token);
             }
         }
         catch (OperationCanceledException) { /* app is shutting down */ }
@@ -267,6 +286,10 @@ public partial class MainViewModel : ObservableObject
             return;
         }
         StatsAvailable = true;
+        // Stamp the successful load — never on the offline branch above — so LastUpdatedText always
+        // honestly reflects the age of the data actually on screen.
+        _lastStatusSuccessAtLocal = DateTime.Now;
+        LastUpdatedText = StatusDisplay.FormatLastUpdated(_lastStatusSuccessAtLocal);
         PlayersOnline = s.PlayersOnline;
         LotsOnline = s.LotsOnline;
         ServerGameVersion = string.IsNullOrEmpty(s.GameVersion) ? "—" : s.GameVersion!;
@@ -341,16 +364,38 @@ public partial class MainViewModel : ObservableObject
         foreach (var n in items) NewsItems.Add(n);
     }
 
+    /// <summary>Checks the launcher-update feed and updates <see cref="UpdateVersion"/> — the single code
+    /// path both the 6-hour background poll (<see cref="StartLauncherUpdatePolling"/>) and a manual Refresh
+    /// (<see cref="RefreshStatusAsync"/>) call, so an update found via either shows the exact same banner.
+    /// Guarded by <see cref="_launcherUpdateGate"/> so the two never hit the feed concurrently: if a check
+    /// is already in flight, this call is a no-op — the in-flight caller's result still lands in
+    /// <see cref="UpdateVersion"/> regardless of who asked.</summary>
     private async Task CheckLauncherUpdateAsync()
     {
+        if (!_launcherUpdateGate.TryEnter()) return;
         try { UpdateVersion = await _selfUpdate.CheckForLauncherUpdateAsync(); }
         catch { /* offline */ }
+        finally { _launcherUpdateGate.Release(); }
     }
 
-    /// <summary>Manual Refresh (button in the SERVER STATUS card): immediately re-checks server status
-    /// (which also recomputes the game-update state) and the launcher self-update, rather than waiting
-    /// for the next timer tick. Guarded by <see cref="IsRefreshing"/> so it can't overlap itself, and
-    /// nudges the poll loop so the automatic timer doesn't fire a second poll right behind this one.</summary>
+    /// <summary>Manual Refresh (button in the SERVER STATUS card). Unlike the passive background polls,
+    /// this EXPLICITLY re-checks for both kinds of update rather than merely nudging them to run sooner:
+    /// <list type="number">
+    /// <item>Reloads server status (<see cref="LoadStatusAsync"/>), which recomputes the game-update state
+    /// from live data.</item>
+    /// <item><see cref="RecheckGameUpdateAsync"/> — when the status endpoint didn't answer, step 1 can only
+    /// conclude "no update" because the required version is UNKNOWN, not because none is needed. This
+    /// re-checks against the canonical client manifest instead, so the "a game update is required" banner
+    /// stays truthful even while the status API is unreachable.</item>
+    /// <item>Runs the launcher self-update check (<see cref="CheckLauncherUpdateAsync"/>) — the same code
+    /// path the 6-hour background poll uses, so an update found here shows the exact same banner.</item>
+    /// </list>
+    /// Steps 1 and 3 are independent network calls and run concurrently, so the common (server-reachable)
+    /// path isn't slowed down. Guarded by <see cref="IsRefreshing"/> so this can't overlap itself;
+    /// <see cref="IsRefreshing"/> always clears in a <c>finally</c> — every check below swallows its own
+    /// errors (offline / unreachable), so no exception reaches here and nothing spams the UI. Nudges both
+    /// poll loops afterwards so neither automatic timer fires — or, for the self-update poll, re-prompts —
+    /// right behind this manual one.</summary>
     [RelayCommand]
     private async Task RefreshStatusAsync()
     {
@@ -358,16 +403,39 @@ public partial class MainViewModel : ObservableObject
         IsRefreshing = true;
         try
         {
-            await LoadStatusAsync();               // refreshes server stats + recomputes game-update state
-            await CheckLauncherUpdateAsync();
+            var statusTask = LoadStatusAsync();              // refreshes server stats + recomputes game-update state
+            var selfUpdateTask = CheckLauncherUpdateAsync();  // independent network call — run alongside it
+            await statusTask;
+            await RecheckGameUpdateAsync();                   // explicit, fresh check — manifest fallback if needed
+            await selfUpdateTask;
         }
         finally
         {
             IsRefreshing = false;
-            // Wake the poll loop so its next interval is measured from now — avoids a redundant poll
-            // landing right on top of this manual one. Ignore if a nudge is already pending.
-            try { _pollNudge.Release(); } catch (SemaphoreFullException) { }
+            // Wake both poll loops so their next interval is measured from now — avoids a redundant
+            // automatic poll / self-update check landing right on top of this manual one.
+            _statusPollGate.Nudge();
+            _launcherUpdateGate.Nudge();
         }
+    }
+
+    /// <summary>Refresh's explicit game-update re-check. <see cref="LoadStatusAsync"/> already recomputed
+    /// <see cref="GameUpdateAvailable"/> from the live server status; that's sufficient — and cheap — when
+    /// the status endpoint answered. When it DIDN'T (<see cref="StatsAvailable"/> false), that recompute
+    /// forces "no update" purely because <see cref="ServerGameVersion"/> is unknown, which would silently
+    /// hide a real pending update behind an unreachable status API. Falls back to a lightweight,
+    /// version-only fetch of the canonical client manifest (<see cref="FsoInstaller.FetchManifestVersionAsync"/>
+    /// — far cheaper than resolving a full download package) so the banner reflects reality. Best-effort: a
+    /// manifest that's ALSO unreachable just leaves the offline-safe state <see cref="LoadStatusAsync"/>
+    /// already set (no exception, no error spam) — see <see cref="DeltaUpdateEngine.ShouldFallBackToManifest"/>
+    /// for the shared/testable decision of when this fallback is worth attempting at all.</summary>
+    private async Task RecheckGameUpdateAsync()
+    {
+        if (!DeltaUpdateEngine.ShouldFallBackToManifest(StatsAvailable, ClientInstalled)) return;
+        var manifestVersion = await new FsoInstaller(_config).FetchManifestVersionAsync();
+        if (string.IsNullOrWhiteSpace(manifestVersion)) return; // manifest also unreachable — nothing more to learn
+        ServerGameVersion = manifestVersion;
+        GameUpdateAvailable = DeltaUpdateEngine.NeedsUpdate(InstalledGameVersion, manifestVersion);
     }
 
     private void Notify(string message)
