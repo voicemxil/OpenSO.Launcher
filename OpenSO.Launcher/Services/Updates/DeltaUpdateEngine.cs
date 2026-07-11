@@ -568,6 +568,20 @@ public sealed class DeltaUpdateEngine
         return string.IsNullOrWhiteSpace(installedVersion) || !VersionEquals(installedVersion, requiredVersion);
     }
 
+    /// <summary>
+    /// True when a manual Refresh's game-update check should fall back to the client manifest for a fresh
+    /// "what version should be installed" answer instead of trusting the just-reloaded server status. This
+    /// is needed exactly when the status endpoint didn't answer (<paramref name="statsAvailable"/> false) —
+    /// its own recompute (<c>MainViewModel.RecomputeGameUpdate</c>) can only conclude "no update" in that
+    /// case because the required version is UNKNOWN, not because none is actually needed, which would
+    /// silently hide a real pending update behind an unreachable status API. Skipped when no client is
+    /// installed (<paramref name="clientInstalled"/> false): there is nothing to compare a version against
+    /// (the PLAY button already reads "INSTALL"), so the extra network round-trip would be wasted. Shared
+    /// testable seam for <c>MainViewModel.RefreshStatusAsync</c> / <c>RecheckGameUpdateAsync</c>.
+    /// </summary>
+    public static bool ShouldFallBackToManifest(bool statsAvailable, bool clientInstalled) =>
+        !statsAvailable && clientInstalled;
+
     private static string TempPath(string prefix, string ext) =>
         Path.Combine(Path.GetTempPath(), $"{prefix}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{Guid.NewGuid():N}{ext}");
 

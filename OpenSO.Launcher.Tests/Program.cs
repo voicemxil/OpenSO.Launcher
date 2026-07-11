@@ -91,6 +91,15 @@ internal static class Program
         await Test("FsoInstaller.InstallAsync writes the handoff marker after a successful full install", TestFsoInstallWritesHandoffMarker);
         await Test("DeltaUpdateEngine.TryDeltaUpdateAsync writes the handoff marker after a successful delta", TestDeltaUpdateWritesHandoffMarker);
 
+        // PHASE 5 — Refresh hardening: explicit game-update manifest fallback + self-update reentrancy.
+        Test("DeltaUpdateEngine.ShouldFallBackToManifest only fires when status is down AND a client is installed", TestShouldFallBackToManifestDecision);
+        Test("FsoInstaller.ParseManifestVersion reads the top-level version, tolerant of malformed input", TestParseManifestVersion);
+        await Test("FsoInstaller.FetchManifestVersionAsync resolves a reachable manifest's version, null otherwise", TestFetchManifestVersionAsync);
+        Test("StatusDisplay.FormatLastUpdated shows a placeholder before the first success, else local HH:mm:ss", TestFormatLastUpdated);
+        Test("PollGate.Nudge wakes a pending WaitAsync early instead of the full delay", TestPollGateNudgeWakesWaiterEarly);
+        Test("PollGate.Nudge is coalesced and never throws even with no waiter / repeated calls", TestPollGateNudgeCoalesces);
+        Test("PollGate.TryEnter/Release guard exclusive in-flight ownership (reentrancy guard)", TestPollGateTryEnterGuardsReentrancy);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -1292,6 +1301,107 @@ internal static class Program
                 "the marker names this launcher's own executable path");
         }
         finally { stopZip(); stopMan(); }
+    }
+
+    // ---- PHASE 5: Refresh hardening ----
+
+    private static void TestShouldFallBackToManifestDecision()
+    {
+        Assert(DeltaUpdateEngine.ShouldFallBackToManifest(statsAvailable: false, clientInstalled: true),
+            "status endpoint down + a client installed => fall back to the manifest");
+        Assert(!DeltaUpdateEngine.ShouldFallBackToManifest(statsAvailable: true, clientInstalled: true),
+            "status endpoint answered => the live recompute already reflects reality, no fallback needed");
+        Assert(!DeltaUpdateEngine.ShouldFallBackToManifest(statsAvailable: false, clientInstalled: false),
+            "nothing installed to compare against => skip the fallback even while offline");
+        Assert(!DeltaUpdateEngine.ShouldFallBackToManifest(statsAvailable: true, clientInstalled: false),
+            "status up, nothing installed => no fallback");
+    }
+
+    private static void TestParseManifestVersion()
+    {
+        var manifest = "{\"schemaVersion\":1,\"version\":\"v0.2.1\",\"clients\":{}}";
+        Assert(FsoInstaller.ParseManifestVersion(manifest) == "v0.2.1", "reads the top-level version field");
+
+        // Tolerant, unlike SelectFromManifest: never throws, just returns null for anything unusable —
+        // this is a best-effort fallback signal, not something that gates an install.
+        Assert(FsoInstaller.ParseManifestVersion("{ not valid json") == null, "malformed JSON returns null (no throw)");
+        Assert(FsoInstaller.ParseManifestVersion("[1,2,3]") == null, "a non-object root returns null");
+        Assert(FsoInstaller.ParseManifestVersion("{\"schemaVersion\":2,\"version\":\"v9\"}") == null,
+            "an unknown schemaVersion returns null");
+        Assert(FsoInstaller.ParseManifestVersion("{\"schemaVersion\":1,\"clients\":{}}") == null,
+            "a missing version field returns null");
+        Assert(FsoInstaller.ParseManifestVersion("{\"schemaVersion\":1,\"version\":\"\"}") == null,
+            "a blank version returns null");
+        Assert(FsoInstaller.ParseManifestVersion("{\"version\":\"v1.0.0\"}") == "v1.0.0",
+            "a missing schemaVersion is tolerated (forward-compat) as long as version is present");
+    }
+
+    private static async Task TestFetchManifestVersionAsync()
+    {
+        var manifest = "{\"schemaVersion\":1,\"version\":\"v3.4.5\",\"clients\":{}}";
+        var (manUrl, stopMan) = await LocalServer.ServeBytes(System.Text.Encoding.UTF8.GetBytes(manifest));
+        try
+        {
+            var cfg = new LauncherConfig { ClientManifestUrl = manUrl };
+            var version = await new FsoInstaller(cfg).FetchManifestVersionAsync();
+            Assert(version == "v3.4.5", "fetches and parses a reachable manifest's version");
+        }
+        finally { stopMan(); }
+
+        // Unreachable manifest => null, never a thrown exception (Refresh's fully-offline path relies on this).
+        var closedUrl = await ClosedUrlAsync();
+        var cfgClosed = new LauncherConfig { ClientManifestUrl = closedUrl };
+        var versionClosed = await new FsoInstaller(cfgClosed).FetchManifestVersionAsync();
+        Assert(versionClosed == null, "an unreachable manifest resolves to null instead of throwing");
+    }
+
+    private static void TestFormatLastUpdated()
+    {
+        Assert(StatusDisplay.FormatLastUpdated(null) == "Updated —", "before the first successful load, shows a placeholder");
+        var t = new DateTime(2026, 7, 11, 21, 47, 32);
+        Assert(StatusDisplay.FormatLastUpdated(t) == "Updated 21:47:32", "a successful load formats as local HH:mm:ss");
+    }
+
+    private static void TestPollGateNudgeWakesWaiterEarly()
+    {
+        var gate = new PollGate();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var waitTask = gate.WaitAsync(TimeSpan.FromSeconds(5));
+        // Give WaitAsync a moment to actually start waiting before nudging it.
+        System.Threading.Thread.Sleep(50);
+        gate.Nudge();
+        waitTask.GetAwaiter().GetResult();
+        sw.Stop();
+        Assert(sw.Elapsed < TimeSpan.FromSeconds(2), $"Nudge() wakes WaitAsync well before its 5s delay (took {sw.Elapsed})");
+    }
+
+    private static void TestPollGateNudgeCoalesces()
+    {
+        var gate = new PollGate();
+        // Nudging with nobody waiting, and nudging twice in a row, must never throw (SemaphoreFullException
+        // is swallowed) — this is exactly what lets Refresh nudge a poll loop that isn't currently asleep.
+        gate.Nudge();
+        gate.Nudge();
+
+        // The pending nudge above is consumed by the first WaitAsync — it returns immediately.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        gate.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        Assert(sw.Elapsed < TimeSpan.FromSeconds(2), "a nudge queued before anyone waits still wakes the first WaitAsync");
+
+        // The coalesced second nudge was NOT queued — the next WaitAsync gets no early wake and times out.
+        sw.Restart();
+        gate.WaitAsync(TimeSpan.FromMilliseconds(300)).GetAwaiter().GetResult();
+        Assert(sw.Elapsed >= TimeSpan.FromMilliseconds(250), "repeated nudges coalesce into a single wake, not one per call");
+    }
+
+    private static void TestPollGateTryEnterGuardsReentrancy()
+    {
+        var gate = new PollGate();
+        Assert(gate.TryEnter(), "the first caller claims the in-flight slot");
+        Assert(!gate.TryEnter(), "a second, concurrent caller is refused (would otherwise run redundantly in parallel)");
+        gate.Release();
+        Assert(gate.TryEnter(), "after Release(), the slot can be claimed again");
+        gate.Release();
     }
 
     // ---- PHASE 2 helpers ----

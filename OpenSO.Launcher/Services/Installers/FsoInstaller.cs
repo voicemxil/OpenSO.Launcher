@@ -349,6 +349,52 @@ public sealed class FsoInstaller : IComponentInstaller
         }
     }
 
+    /// <summary>
+    /// Lightweight, best-effort fetch of just the canonical client manifest's top-level <c>version</c>
+    /// field — used as a fallback source of "what version does the release currently ship" when the live
+    /// status endpoint (<c>/userapi/status</c>) is unreachable, so a manual Refresh's game-update banner
+    /// stays truthful even while offline from the status API host (see
+    /// <see cref="DeltaUpdateEngine.ShouldFallBackToManifest"/>). Unlike <see cref="ResolveClientPackageAsync(CancellationToken)"/>
+    /// (used to gate the actual install/update, which hard-fails on a corrupt manifest so nothing can dodge
+    /// hash verification, and also enumerates the GitHub release feed as a controlled fallback), this path
+    /// is read-only, single-request, and best-effort: any failure — network, malformed JSON, missing field
+    /// — returns null rather than throwing, because a stale banner is a minor UX issue, not a security
+    /// concern, and never falls through to the GitHub feed (that's a much heavier ask than a version
+    /// string).
+    /// </summary>
+    internal async Task<string?> FetchManifestVersionAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var resp = await GetAsync(_config.ClientManifestUrl, ct);
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadAsStringAsync(ct);
+            return ParseManifestVersion(json);
+        }
+        catch { return null; } // manifest unavailable — caller (Refresh) leaves its offline-safe state as-is
+    }
+
+    /// <summary>Pure parse of a manifest's top-level <c>version</c> field (schemaVersion 1, or the field
+    /// absent for forward-compat). Tolerant by design — returns null on malformed JSON, a non-object root,
+    /// an unknown schema, or a missing/blank version, rather than throwing (unlike <see cref="SelectFromManifest"/>,
+    /// which must hard-fail because it gates an actual install). Callers use this only as a best-effort
+    /// fallback signal, never to authorize a download.</summary>
+    internal static string? ParseManifestVersion(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            if (root.TryGetProperty("schemaVersion", out var sv) && sv.ValueKind == JsonValueKind.Number
+                && sv.TryGetInt32(out var schema) && schema != 1) return null;
+            if (!root.TryGetProperty("version", out var v) || v.ValueKind != JsonValueKind.String) return null;
+            var version = v.GetString();
+            return string.IsNullOrWhiteSpace(version) ? null : version;
+        }
+        catch { return null; }
+    }
+
     /// <summary>Back-compat URL-only resolver (drops the hash). Kept for callers/tests that only need the
     /// resolved URL; the install path uses <see cref="ResolveClientPackageAsync(CancellationToken)"/> so it
     /// can hash-verify the download.</summary>
