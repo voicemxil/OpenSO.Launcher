@@ -7,6 +7,13 @@ internal static class Program
     [System.STAThread]
     public static void Main(string[] args)
     {
+        // --smoke: headless self-check of the trim-sensitive paths against THIS (published/trimmed)
+        // binary — never starts the Avalonia UI loop. CI runs it after publish and fails on a non-zero
+        // exit (see SmokeTest / BUILD_AND_TEST.md → "Trimmed-binary smoke gate"). Handle it before any
+        // Avalonia bootstrap so the check needs no window server.
+        if (SmokeTest.IsRequested(args))
+            System.Environment.Exit(SmokeTest.Run());
+
         // args flows through to App.OnFrameworkInitializationCompleted as
         // IClassicDesktopStyleApplicationLifetime.Args, where LauncherArgs.HasUpdateGame checks for
         // --update-game (the game client's version-mismatch handoff — see BUILD_AND_TEST.md → "Game →

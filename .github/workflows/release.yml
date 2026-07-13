@@ -97,6 +97,19 @@ jobs:
           dotnet publish OpenSO.Launcher/OpenSO.Launcher.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
             -p:Version=${{ steps.ver.outputs.num }} -p:PublishSingleFile=false -o publish
 
+      - name: Smoke self-check (${{ matrix.rid }})
+        # Gate the release on the TRIMMED binary actually working: run its headless `--smoke` self-check
+        # (source-gen JSON, manifest/feed parsing, RID/version/timestamp logic, ArchivePathGuard). A
+        # trimming regression fails this step and blocks the release. Skipped for osx-x64, which is
+        # cross-published on the arm64 mac runner and can't execute here (see the matrix note above).
+        # See BUILD_AND_TEST.md → "Trimmed-binary smoke gate".
+        if: matrix.rid != 'osx-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ runner.os }}" = "Windows" ]; then BIN="publish/OpenSO.Launcher.exe"; else BIN="publish/OpenSO.Launcher"; chmod +x "$BIN"; fi
+          "$BIN" --smoke
+
       - name: Zip (Unix)
         if: runner.os != 'Windows'
         run: ( cd publish && zip -r "../OpenSO.Launcher-${{ matrix.rid }}.zip" . )

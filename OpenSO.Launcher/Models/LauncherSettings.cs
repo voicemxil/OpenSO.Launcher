@@ -24,7 +24,8 @@ public sealed class LauncherSettings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<LauncherSettings>(File.ReadAllText(FilePath)) ?? new LauncherSettings();
+                // Source-generated (trim-safe) metadata — see LauncherJsonContext.
+                return JsonSerializer.Deserialize(File.ReadAllText(FilePath), LauncherJsonContext.Default.LauncherSettings) ?? new LauncherSettings();
         }
         catch { /* corrupt/missing -> defaults */ }
         return new LauncherSettings();
@@ -35,7 +36,8 @@ public sealed class LauncherSettings
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            // WriteIndented is baked into LauncherJsonContext's options.
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, LauncherJsonContext.Default.LauncherSettings));
         }
         catch { /* non-fatal */ }
     }

@@ -46,11 +46,14 @@ OPENSO_TEST_CAB=/path/to/Data1.cab dotnet run
   `OperatingSystem.Is*()` internally and are asserted either way, the ZIP symlink test sets the Unix mode
   bits directly on the zip entry (no real symlink is created), and the CAB test self-skips unless
   `OPENSO_TEST_CAB` is set. No matrix is needed for correctness (the release workflow's per-RID matrix
-  already covers the platform-specific *publish* step separately).
+  already covers the platform-specific *publish* step separately). After the tests, ci.yml also produces
+  the **trimmed** linux-x64 publish and runs its `--smoke` self-check (see "Trimmed-binary smoke gate"),
+  so a trimming regression fails the job too.
 - **`.github/workflows/release.yml`** — gates the release on the same build+test: a `test` job (identical
   build+test steps) must succeed before the per-RID `build`/publish job runs, which in turn gates the
   `release` job that publishes the GitHub Release (`needs: test` → `needs: build`). A release can never
-  be cut from a red suite. The `test` job's stdout is captured to `test-results.log`, echoed into the
+  be cut from a red suite. Each per-RID publish additionally runs the trimmed binary's `--smoke`
+  self-check (skipping the cross-published osx-x64) so a release can never be cut from a broken trim. The `test` job's stdout is captured to `test-results.log`, echoed into the
   job's step summary, and uploaded as the `release-test-log` artifact (90-day retention) so a release's
   verification is auditable after the fact.
 
@@ -74,24 +77,115 @@ local-only workaround and is not set in either workflow.
 ## Publish native, self-contained builds (what you ship)
 
 Replaces the upstream `npm buildwin / builddarwin / builddeb`. Each produces a self-contained app
-that needs no installed .NET runtime:
+that needs no installed .NET runtime. **Multi-file** (not single-file) — the release workflow copies the
+whole publish dir into the macOS `.app` bundle and the self-update swap replaces the dir wholesale; see
+"Published size & trimming" below for why single-file is a deferred follow-up.
 
 ```bash
 cd OpenSO.Launcher
 
 # Windows x64
-dotnet publish -c Release -r win-x64   --self-contained -p:PublishSingleFile=true -o ../dist/win-x64
+dotnet publish -c Release -r win-x64   --self-contained -o ../dist/win-x64
 
 # macOS (Intel + Apple Silicon)
-dotnet publish -c Release -r osx-x64   --self-contained -p:PublishSingleFile=true -o ../dist/osx-x64
-dotnet publish -c Release -r osx-arm64 --self-contained -p:PublishSingleFile=true -o ../dist/osx-arm64
+dotnet publish -c Release -r osx-x64   --self-contained -o ../dist/osx-x64
+dotnet publish -c Release -r osx-arm64 --self-contained -o ../dist/osx-arm64
 
 # Linux x64
-dotnet publish -c Release -r linux-x64 --self-contained -p:PublishSingleFile=true -o ../dist/linux-x64
+dotnet publish -c Release -r linux-x64 --self-contained -o ../dist/linux-x64
 ```
 
-Wire these into the CI release workflow (strategy doc §8) so the launcher ships alongside the client.
-Per-OS installers (Inno Setup `.exe`, `.dmg`, `.deb`) wrap these outputs, mirroring upstream.
+All the size knobs (invariant globalization, IL-only/no-ReadyToRun, no shipped PDBs, trimming) live in
+`OpenSO.Launcher.csproj` and apply automatically — no extra `-p:` flags. Per-OS installers (Inno Setup
+`.exe`, `.dmg`, `.deb`) wrap these outputs, mirroring upstream.
+
+## Published size & trimming
+
+The self-contained publish is aggressively size-optimized. Baseline vs. optimized (self-contained, per RID):
+
+| RID       | Baseline | Optimized | What dominates the "before" |
+|-----------|---------:|----------:|-----------------------------|
+| osx-arm64 |   109 MB |     47 MB | untrimmed framework (CoreLib 15.5 MB, Xml 8.8 MB, …) |
+| linux-x64 |  ~109 MB |     45 MB | same |
+| win-x64   |  ~146 MB |     46 MB | the above **+ ~100 MB of native PDBs** (libSkiaSharp.pdb ≈ 80 MB, libHarfBuzzSharp.pdb ≈ 20 MB) |
+
+The knobs, in the csproj:
+
+- **`InvariantGlobalization=true`.** The launcher does no culture-specific parsing/formatting — server
+  timestamps are ISO-8601 (culture-invariant), on-screen times use fixed formats (`HH:mm:ss`, `h:mm tt`),
+  and every case-fold is `*Invariant`. Invariant mode changes the culture, **not** the time zone, so the
+  status/clock times stay local. Drops `icudt.dat` (~24 MB on win/linux; macOS uses the system ICU) and
+  lets the trimmer prune the globalization stack.
+- **IL only, never ReadyToRun** (`PublishReadyToRun=false`), and **no shipped PDBs** — `DebugType=none`
+  for the app's managed symbols, plus a `StripPublishSymbols` target that removes **native** `.pdb`s the
+  runtime packs copy in (the ~100 MB Windows win above). `release.yml` uploads no separate symbol
+  artifact, so shipped symbols are pure weight.
+- **`PublishTrimmed=true`, `TrimMode=partial`.** Trims the framework and trim-annotated libs (Avalonia 12
+  is trim-safe; this app uses compiled bindings everywhere — CI validates them) while copying
+  non-annotated libs (e.g. AsyncImageLoader) whole. Shrinks e.g. CoreLib 15.5→2.65 MB, System.Text.Json
+  2.0→0.27 MB, and removes System.Private.Xml, System.Data.Common, DataContractSerialization, VisualBasic.
+
+### Trim safety (the reflection audit)
+
+Trimming can silently drop members reached only by reflection. The audited surfaces and their fixes:
+
+- **JSON.** The only reflection-based serialization was `LauncherSettings` (settings file) and
+  `ServerStatus` (status endpoint). Both now route through the **source-generated** `LauncherJsonContext`
+  (`Models/LauncherJsonContext.cs`) — compile-time metadata, zero reflection, trim-safe. Every other JSON
+  path is `JsonDocument` (a DOM reader — reflection-free already): the client manifest, GitHub release
+  feeds, delta manifests, launcher self-update feed.
+- **XAML bindings.** `MainWindow.axaml` had two `x:CompileBindings="False"` item-template islands
+  (busiest-lots and news) that fell back to **reflection bindings** — which break under trimming if the
+  bound model's members are stripped. Both were converted to **compiled bindings** (`x:DataType` on the
+  `DataTemplate`; the news command uses the `$parent[ItemsControl].((vm:MainViewModel)DataContext)` form).
+  Avalonia validates compiled bindings at build time, so a mistake fails the build, not the runtime.
+- **CommunityToolkit.Mvvm** is source-generated (trim-safe). **AsyncImageLoader** is copied whole (not
+  trim-annotated), so its internal reflection is preserved.
+
+Result: **zero project-code trim warnings.** The only remaining `IL2xxx` warnings come from
+`Avalonia.DesignerSupport.Remote.*` — Avalonia's design-time XAML-previewer entry point, which the shipped
+app never executes (its entry point is `Program.Main`, not `RemoteDesignerEntryPoint.Main`). Those are
+library warnings and are justified/expected.
+
+### Trimmed-binary smoke gate (`--smoke`)
+
+The logic tests (`OpenSO.Launcher.Tests`) compile the sources **fresh**, so they can never see the
+trimmer's output. To catch trim breakage the shipped binary carries a headless self-check:
+
+```bash
+./OpenSO.Launcher --smoke     # ...\OpenSO.Launcher.exe --smoke on Windows
+```
+
+It never starts the Avalonia UI loop; it exercises the trim-sensitive paths and exits 0 iff all pass
+(non-zero otherwise). Coverage: source-gen `ServerStatus` deserialize (case-insensitive, nested arrays) +
+`LauncherSettings` round-trip; per-RID manifest select/version-parse (incl. malformed → hard-fail); GitHub
+release-feed parse + exact-RID asset picking (client + launcher); RID detection; version comparison;
+invariant timestamp formatting; and `ArchivePathGuard` on a real in-memory zip (safe extracts; traversal
+rejected, nothing written). Implemented in `SmokeTest.cs`, dispatched from `Program.Main` before any
+Avalonia bootstrap.
+
+**CI gates on it.** `ci.yml` publishes the trimmed linux-x64 binary and runs `--smoke` on every PR/push;
+`release.yml` runs `--smoke` on each freshly-published binary (skipping osx-x64, which is cross-published
+on the arm64 mac runner and can't execute there). A non-zero exit fails the job and blocks the release.
+
+**What `--smoke` does NOT cover:** the Avalonia UI itself (XAML load, Fluent theme, control rendering,
+AsyncImageLoader) — it runs headless. Those are covered by compiled-binding build validation + running the
+app on a real desktop session; verify the window renders after any Avalonia/trim change.
+
+### Single-file publish — deferred follow-up
+
+`release.yml` publishes multi-file (`PublishSingleFile=false`). Reasons to keep it that way for now:
+
+- **macOS must stay multi-file:** the workflow does `cp -R publish/. "OpenSO Launcher.app/Contents/MacOS/"`
+  then `codesign --deep` + DMG — a single-file apphost that self-extracts natives to a temp dir would
+  fight that layout and signing.
+- **Self-update is already layout-agnostic** (verified by reading `SelfUpdateService.SpawnSwapAndRelaunch`:
+  it copies the *whole* extracted dir over the app dir — `xcopy /E` on Windows, `cp -R` on Unix — so file
+  count doesn't matter), so single-file for **win/linux only** (via per-RID conditional publish args) is
+  *possible* and would add `EnableCompressionInSingleFile` savings.
+- **But** SkiaSharp/HarfBuzz natives under single-file need `IncludeNativeLibrariesForSelfExtract=true` and
+  runtime verification on real Windows/Linux — which can't be done from a macOS dev box — so it's left as a
+  recommended follow-up rather than shipped unverified.
 
 ## Archive-extraction security policy
 

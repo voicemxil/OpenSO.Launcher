@@ -17,7 +17,6 @@ public sealed class StatusService
 {
     private readonly LauncherConfig _config;
     private readonly HttpClient _http;
-    private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
 
     public StatusService(LauncherConfig config)
     {
@@ -33,7 +32,8 @@ public sealed class StatusService
         try
         {
             var json = await _http.GetStringAsync($"{Api}/userapi/status", ct);
-            return JsonSerializer.Deserialize<ServerStatus>(json, Opts);
+            // Source-generated (trim-safe) metadata; case-insensitive is baked into LauncherJsonContext.
+            return JsonSerializer.Deserialize(json, LauncherJsonContext.Default.ServerStatus);
         }
         catch { return null; } // offline / endpoint unavailable -> caller shows placeholders
     }

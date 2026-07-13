@@ -2,6 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:OpenSO.Launcher.ViewModels"
         xmlns:asyncImageLoader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
+        xmlns:models="using:OpenSO.Launcher.Models"
+        xmlns:svc="using:OpenSO.Launcher.Services"
         x:Class="OpenSO.Launcher.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Width="960" Height="620" MinWidth="860" MinHeight="560"
@@ -170,9 +172,9 @@
             <!-- BUSIEST LOTS -->
             <StackPanel IsVisible="{Binding StatsAvailable}" Spacing="6">
               <TextBlock Classes="label" Text="BUSIEST LOTS" Margin="0,4,0,2"/>
-              <ItemsControl ItemsSource="{Binding TopLots}" x:CompileBindings="False">
+              <ItemsControl ItemsSource="{Binding TopLots}">
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate>
+                  <DataTemplate x:DataType="models:TopLot">
                     <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6" ColumnSpacing="10">
                       <Border Grid.Column="0" Width="42" Height="42" CornerRadius="5" ClipToBounds="True" Background="{DynamicResource CardAlt}">
                         <Image asyncImageLoader:ImageLoader.Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
@@ -186,13 +188,13 @@
             </StackPanel>
 
             <TextBlock Classes="label" Text="LATEST NEWS" Margin="0,8,0,0"/>
-            <ItemsControl ItemsSource="{Binding NewsItems}" x:CompileBindings="False">
+            <ItemsControl ItemsSource="{Binding NewsItems}">
               <ItemsControl.ItemTemplate>
-                <DataTemplate>
+                <DataTemplate x:DataType="svc:NewsItem">
                   <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="{DynamicResource Card}"
                           BorderBrush="{DynamicResource Line}" BorderThickness="1"
                           CornerRadius="10" Padding="16,12" Margin="0,0,0,8" Cursor="Hand"
-                          Command="{Binding DataContext.OpenNewsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).OpenNewsCommand}"
                           CommandParameter="{Binding}">
                     <StackPanel>
                       <TextBlock Text="{Binding Title}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" TextWrapping="Wrap"/>
