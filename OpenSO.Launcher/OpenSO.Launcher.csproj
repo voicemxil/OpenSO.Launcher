@@ -12,7 +12,51 @@
     <Version>0.1.0</Version>
     <!-- App icon (multi-res .ico from the branding folder) -->
     <ApplicationIcon>Assets/openso.ico</ApplicationIcon>
+
+    <!-- ── Published-size optimizations (see BUILD_AND_TEST.md → "Published size & trimming") ──
+         The launcher does no culture-specific parsing/formatting: server timestamps are ISO-8601
+         (culture-invariant), on-screen clocks use fixed numeric/invariant formats (HH:mm:ss, h:mm tt),
+         and all case-folding is *Invariant. So invariant globalization is safe and drops the ICU data
+         (icudt.dat, ~24 MB on win/linux; macOS uses system ICU) plus lets the trimmer prune the
+         globalization stack. Timestamps stay LOCAL time — invariant globalization changes culture, not
+         the time zone. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- Ship IL, never ReadyToRun: R2R roughly doubles assembly size (native + IL) for a faster cold
+         start we don't need in a launcher, and it fights trimming. Explicit-off in case a future SDK
+         default flips. -->
+    <PublishReadyToRun>false</PublishReadyToRun>
+
+    <!-- Trim on publish. partial (copyused) trims the framework + assemblies that opt in as trimmable
+         (Avalonia 12 is trim-annotated; compiled bindings are validated in CI) while copying
+         non-annotated libs whole — the low-risk mode. The launcher's only reflection-based serialization
+         (LauncherSettings + ServerStatus) is routed through the source-generated LauncherJsonContext, so
+         there are no reflection JSON warnings; every other JSON path is JsonDocument (DOM, reflection-free).
+         The smoke self-check (the smoke flag) exercises the trim-sensitive paths against the trimmed binary in CI.
+         Warnings are surfaced (not silenced): TrimmerSingleWarn=false lists each IL2xxx site individually. -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
   </PropertyGroup>
+
+  <!-- Release ships no PDBs. release.yml zips the whole publish dir and uploads NO separate symbol
+       artifact, so a shipped .pdb is dead weight; the CI Release *build* is only a compile gate and
+       needs none either. Scoped to Release so local Debug keeps its symbols. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- DebugType=none only governs the app's own MANAGED symbols. The native runtime packs ship huge
+       native .pdb files as publish content that it never touches — on win-x64, libSkiaSharp.pdb (~80 MB)
+       and libHarfBuzzSharp.pdb (~20 MB) alone are ~100 MB, dwarfing everything else. release.yml uploads
+       no separate symbol artifact, so every shipped .pdb is dead weight. Strip them all from the Release
+       publish output (by far the biggest single win on Windows). -->
+  <Target Name="StripPublishSymbols" AfterTargets="ComputeFilesToPublish" Condition="'$(Configuration)' == 'Release'">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <AvaloniaResource Include="Assets/**" />
