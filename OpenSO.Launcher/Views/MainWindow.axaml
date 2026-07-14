@@ -310,7 +310,7 @@
                 <StackPanel Spacing="5">
                   <TextBlock Text="Live Desktop Notifications" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding LiveNotifications}" HorizontalAlignment="Stretch"/>
-                  <TextBlock Classes="sub" TextWrapping="Wrap" Text="Shows a desktop notification when a launcher or game update is detected (Windows)."/>
+                  <TextBlock Classes="sub" TextWrapping="Wrap" Text="Shows a desktop notification when a launcher or game update is detected (Windows and macOS)."/>
                 </StackPanel>
                 <StackPanel Spacing="5">
                   <TextBlock Text="Closing Behavior" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>

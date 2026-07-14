@@ -6,10 +6,11 @@ using System.Threading.Tasks;
 namespace OpenSO.Launcher.Services;
 
 /// <summary>
-/// Desktop ("balloon") notifications on Windows via Shell_NotifyIcon — shown by the OS as native
-/// toast notifications on Windows 10/11. Mirrors the upstream launcher's Launcher.DesktopNotifications
-/// feature. The notification icon is added only for the lifetime of a balloon (then removed), so it
-/// doesn't sit next to the launcher's regular tray icon. No-ops on non-Windows platforms.
+/// Desktop notifications. Windows: Shell_NotifyIcon balloons — shown by the OS as native toast
+/// notifications on Windows 10/11; the notification icon is added only for the lifetime of a balloon
+/// (then removed), so it doesn't sit next to the launcher's regular tray icon. macOS: Notification
+/// Center via osascript's "display notification" (no signing entitlements or permission plumbing
+/// needed). Mirrors the upstream launcher's Launcher.DesktopNotifications feature. No-ops on Linux.
 /// </summary>
 internal static class TrayNotifier
 {
@@ -44,6 +45,7 @@ internal static class TrayNotifier
     /// <summary>Shows a desktop notification. Silently does nothing if unsupported or uninitialized.</summary>
     public static void Show(string title, string message)
     {
+        if (OperatingSystem.IsMacOS()) { ShowMac(title, message); return; }
         if (!OperatingSystem.IsWindows() || _hwnd == IntPtr.Zero) return;
         try
         {
@@ -70,6 +72,24 @@ internal static class TrayNotifier
             _ = Task.Delay(TimeSpan.FromSeconds(12)).ContinueWith(_ => RemoveIcon(gen));
         }
         catch (Exception ex) { Log.Warn("Desktop notification failed", ex); }
+    }
+
+    /// <summary>macOS Notification Center. osascript takes the script as an argv element (no shell),
+    /// so only AppleScript string escaping is needed — backslashes and double quotes.</summary>
+    private static void ShowMac(string title, string message)
+    {
+        static string Esc(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+        try
+        {
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "/usr/bin/osascript",
+                ArgumentList = { "-e", $"display notification \"{Esc(message)}\" with title \"{Esc(title)}\"" },
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            });
+        }
+        catch (Exception ex) { Log.Warn("Desktop notification failed (osascript)", ex); }
     }
 
     private static void RemoveIcon(int generation)
