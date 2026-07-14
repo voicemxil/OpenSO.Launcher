@@ -29,7 +29,7 @@ public sealed class DownloadService
     public string? ExpectedMd5 { get; }
     public string? ExpectedSha256 { get; }
 
-    public DownloadService(string from, string to, string? expectedMd5 = null, int? maxRetries = null, TimeSpan? stallTimeout = null, TimeSpan? headersTimeout = null, TimeSpan? retryDelay = null, string? expectedSha256 = null)
+    public DownloadService(string from, string to, string? expectedMd5 = null, string? expectedSha256 = null, int? maxRetries = null, TimeSpan? stallTimeout = null, TimeSpan? headersTimeout = null, TimeSpan? retryDelay = null)
     {
         From = from; To = to; ExpectedMd5 = expectedMd5; ExpectedSha256 = expectedSha256;
         _maxRetries = maxRetries ?? DefaultMaxRetries; _stallTimeout = stallTimeout ?? DefaultStallTimeout;
@@ -114,12 +114,15 @@ public sealed class DownloadService
         progress?.Report(new ProgressReport("download", 1.0, "verifying…"));
         var (hex, b64) = ComputeMd5(To); Md5Base64 = b64;
         if (!string.IsNullOrEmpty(ExpectedMd5)) { var want = ExpectedMd5.Trim(); bool ok = want.Equals(hex, StringComparison.OrdinalIgnoreCase) || want.Equals(b64, StringComparison.Ordinal); if (!ok) { try { File.Delete(To); } catch { } throw new ChecksumMismatchException($"Checksum mismatch for {From}."); } }
+        // SHA-256 verification for the per-RID client manifest (openso-manifest.json): the manifest and its
+        // assets are untrusted transport input, so a downloaded package MUST match the manifest's hash before
+        // anything reads or extracts it. Mismatch = discard the file and fail hard (never extract it).
         if (!string.IsNullOrEmpty(ExpectedSha256))
         {
             // Accept GitHub's release-asset digest format ("sha256:<hex>") or a bare hex string.
             var want = ExpectedSha256.Trim();
             if (want.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase)) want = want["sha256:".Length..];
-            var got = ComputeSha256(To);
+            var got = ComputeSha256Hex(To);
             if (!want.Equals(got, StringComparison.OrdinalIgnoreCase))
             {
                 try { File.Delete(To); } catch { }
@@ -135,7 +138,7 @@ public sealed class DownloadService
     private static string? FormatSpeed(double bps) { if (bps <= 0) return null; if (bps >= 1048576) return $"{bps / 1048576:0.0} MB/s"; if (bps >= 1024) return $"{bps / 1024:0.0} KB/s"; return $"{bps:0} B/s"; }
     public async Task CleanupAsync() { try { if (File.Exists(To)) File.Delete(To); } catch { } await Task.CompletedTask; }
     private static (string Hex, string Base64) ComputeMd5(string path) { using var md5 = MD5.Create(); using var fs = File.OpenRead(path); var h = md5.ComputeHash(fs); return (Convert.ToHexString(h).ToLowerInvariant(), Convert.ToBase64String(h)); }
-    private static string ComputeSha256(string path) { using var sha = SHA256.Create(); using var fs = File.OpenRead(path); return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant(); }
+    private static string ComputeSha256Hex(string path) { using var sha = SHA256.Create(); using var fs = File.OpenRead(path); return Convert.ToHexString(sha.ComputeHash(fs)).ToLowerInvariant(); }
 
     private static void ApplyGitHubHeaders(HttpRequestMessage req, string url)
     {

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Threading;
@@ -11,6 +12,11 @@ namespace OpenSO.Launcher.Services.Extraction;
 /// Extracts a zip into a destination directory, creating subdirectories, reporting each entry,
 /// and (optionally) preserving the unix file mode for executables — the cpperm behavior used by
 /// the Mac/Linux extras in fso.js step6.
+///
+/// Archives come from the network (client, self-update, TSO, remesh) and are therefore untrusted:
+/// EVERY entry — files and directories — is validated against the destination BEFORE any disk
+/// mutation (two passes), and the whole archive is rejected on the first unsafe entry so a
+/// half-extraction of a malicious zip is never left on disk. See ArchivePathGuard / BUILD_AND_TEST.md.
 /// </summary>
 public static class ZipExtractor
 {
@@ -21,11 +27,7 @@ public static class ZipExtractor
         if (!File.Exists(from))
             throw new FileNotFoundException($"file to extract {from} does not exist");
 
-        Directory.CreateDirectory(to);
-
         using var archive = ZipFile.OpenRead(from);
-        int total = archive.Entries.Count;
-        int done = 0;
         // Progress is byte-based, not file-count: a single large file (the ~100 MB bundled runtime)
         // otherwise jumps 1%->100% while small files fly by. Track uncompressed bytes written vs the
         // archive total, reporting within big files too so the bar moves smoothly.
@@ -33,34 +35,35 @@ public static class ZipExtractor
         foreach (var e in archive.Entries) totalBytes += e.Length;
         long writtenBytes = 0;
 
-        // Zip-slip guard root: trailing separator so a SIBLING with the same prefix ("C:\inst-evil"
-        // vs "C:\inst") can't pass, and case-insensitive comparison on Windows (the filesystem is —
-        // an Ordinal check would wave through a case-varied traversal).
-        var root = Path.GetFullPath(to);
-        if (!root.EndsWith(Path.DirectorySeparatorChar)) root += Path.DirectorySeparatorChar;
-        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var destRoot = Path.GetFullPath(to);
 
+        // PASS 1 — validate EVERY entry against the destination before touching the disk. Any unsafe
+        // entry (traversal, rooted path, sibling escape, symlink/special file) rejects the WHOLE archive
+        // with nothing written: no partial extraction of an untrusted zip.
+        var plan = new List<(ZipArchiveEntry Entry, string Target, bool IsDir)>(archive.Entries.Count);
         foreach (var entry in archive.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
+            ArchivePathGuard.RejectIfLinkOrSpecial(entry);
+            bool isDir = entry.FullName.EndsWith('/') || string.IsNullOrEmpty(entry.Name);
+            var target = ArchivePathGuard.ResolveContainedPath(destRoot, entry.FullName);
+            plan.Add((entry, target, isDir));
+        }
+
+        // PASS 2 — the archive is proven safe; materialize it.
+        Directory.CreateDirectory(to);
+        int total = plan.Count, done = 0;
+        foreach (var (entry, destination, isDir) in plan)
         {
             ct.ThrowIfCancellationRequested();
             done++;
 
-            // Directory entry (name ends with '/') — just ensure it exists (guarded like files:
-            // a "../" directory entry must not create folders outside the destination).
-            if (entry.FullName.EndsWith("/") || string.IsNullOrEmpty(entry.Name))
+            if (isDir)
             {
-                var dirDest = Path.GetFullPath(Path.Combine(to, entry.FullName));
-                if (!dirDest.StartsWith(root, cmp) && dirDest + Path.DirectorySeparatorChar != root)
-                    throw new IOException($"Blocked unsafe zip entry path: {entry.FullName}");
-                Directory.CreateDirectory(dirDest);
+                Directory.CreateDirectory(destination);
                 continue;
             }
 
-            var destination = Path.GetFullPath(Path.Combine(to, entry.FullName));
-
-            // Zip-slip guard: never write outside the destination directory.
-            if (!destination.StartsWith(root, cmp))
-                throw new IOException($"Blocked unsafe zip entry path: {entry.FullName}");
 
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
 

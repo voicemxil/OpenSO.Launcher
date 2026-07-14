@@ -2,6 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:OpenSO.Launcher.ViewModels"
         xmlns:asyncImageLoader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
+        xmlns:models="using:OpenSO.Launcher.Models"
+        xmlns:svc="using:OpenSO.Launcher.Services"
         x:Class="OpenSO.Launcher.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Width="960" Height="620" MinWidth="860" MinHeight="560"
@@ -127,9 +129,21 @@
             <!-- LIVE SERVER STATS (polled from /userapi/status) -->
             <Border Classes="card">
               <StackPanel Spacing="14">
-                <Grid ColumnDefinitions="*,Auto">
+                <Grid ColumnDefinitions="Auto,*,Auto">
                   <TextBlock Grid.Column="0" Classes="label" Text="SERVER STATUS" VerticalAlignment="Center"/>
-                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
+                  <!-- Manual refresh: forces an immediate status + update check. Shows '…' while a
+                       refresh is in flight; disabled meanwhile so it can't double-fire. The caption next
+                       to it shows when the stats on screen were last successfully loaded. -->
+                  <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="10,0,0,0" VerticalAlignment="Center">
+                    <Button Padding="8,2" CornerRadius="6"
+                            Command="{Binding RefreshStatusCommand}" IsEnabled="{Binding !IsRefreshing}"
+                            Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}"
+                            FontSize="11" FontWeight="SemiBold" Cursor="Hand"
+                            Content="{Binding RefreshButtonText}"/>
+                    <TextBlock Text="{Binding LastUpdatedText}" Foreground="{DynamicResource Ink3}"
+                               FontSize="11" VerticalAlignment="Center"/>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Good}" VerticalAlignment="Center" IsVisible="{Binding ServerOnline}"/>
                     <Ellipse Width="9" Height="9" Fill="{DynamicResource Bad}" VerticalAlignment="Center" IsVisible="{Binding !ServerOnline}"/>
                     <TextBlock Text="{Binding ServerName}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" VerticalAlignment="Center"/>
@@ -159,9 +173,9 @@
             <!-- BUSIEST LOTS -->
             <StackPanel IsVisible="{Binding StatsAvailable}" Spacing="6">
               <TextBlock Classes="label" Text="BUSIEST LOTS" Margin="0,4,0,2"/>
-              <ItemsControl ItemsSource="{Binding TopLots}" x:CompileBindings="False">
+              <ItemsControl ItemsSource="{Binding TopLots}">
                 <ItemsControl.ItemTemplate>
-                  <DataTemplate>
+                  <DataTemplate x:DataType="models:TopLot">
                     <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,6" ColumnSpacing="10">
                       <Border Grid.Column="0" Width="42" Height="42" CornerRadius="5" ClipToBounds="True" Background="{DynamicResource CardAlt}">
                         <Image asyncImageLoader:ImageLoader.Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
@@ -175,13 +189,13 @@
             </StackPanel>
 
             <TextBlock Classes="label" Text="LATEST NEWS" Margin="0,8,0,0"/>
-            <ItemsControl ItemsSource="{Binding NewsItems}" x:CompileBindings="False">
+            <ItemsControl ItemsSource="{Binding NewsItems}">
               <ItemsControl.ItemTemplate>
-                <DataTemplate>
+                <DataTemplate x:DataType="svc:NewsItem">
                   <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="{DynamicResource Card}"
                           BorderBrush="{DynamicResource Line}" BorderThickness="1"
                           CornerRadius="10" Padding="16,12" Margin="0,0,0,8" Cursor="Hand"
-                          Command="{Binding DataContext.OpenNewsCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                          Command="{Binding $parent[ItemsControl].((vm:MainViewModel)DataContext).OpenNewsCommand}"
                           CommandParameter="{Binding}">
                     <StackPanel>
                       <TextBlock Text="{Binding Title}" Foreground="{DynamicResource Ink}" FontWeight="SemiBold" TextWrapping="Wrap"/>
@@ -289,7 +303,7 @@
                 <StackPanel Spacing="5">
                   <TextBlock Text="Graphics Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding GraphicsModes}" SelectedItem="{Binding GraphicsMode}" HorizontalAlignment="Stretch"/>
-                  <TextBlock Classes="sub" Text="DirectX usually performs best on Windows; macOS/Linux use OpenGL."/>
+                  <TextBlock Classes="sub" Text="{Binding GraphicsModeHint}"/>
                 </StackPanel>
                 <StackPanel Spacing="5">
                   <TextBlock Text="3D Mode" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>

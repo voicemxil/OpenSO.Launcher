@@ -36,6 +36,13 @@ public sealed class GameLauncher
         if (string.IsNullOrWhiteSpace(installDir) || !Directory.Exists(installDir))
             throw new DirectoryNotFoundException($"OpenSO install not found at: {installDir}");
 
+        // Game→launcher handoff: refresh the marker on every launch ATTEMPT against a real install dir —
+        // this is what gets an install made by an OLDER launcher (before this marker existed) covered the
+        // first time the user presses PLAY, without waiting for the next update. Best-effort (see
+        // LauncherHandoff) and deliberately unconditional on what follows: even if the exe itself turns
+        // out to be missing below, the directory IS a real FSO install and the marker belongs there.
+        LauncherHandoff.WriteMarker(installDir);
+
         var args = BuildArgs(options);
 
         ProcessStartInfo psi;
@@ -76,8 +83,7 @@ public sealed class GameLauncher
         return proc;
     }
 
-    /// <summary>Builds the launch arguments, mirroring fsolauncher.js launchGame(). Also passed to the
-    /// in-game patcher (update.exe), which hands them back to the game when it relaunches it.</summary>
+    /// <summary>Builds the launch arguments, mirroring fsolauncher.js launchGame().</summary>
     internal static List<string> BuildArgs(Options o)
     {
         var args = new List<string>();
@@ -91,7 +97,8 @@ public sealed class GameLauncher
         args.Add($"-{gfx}");
 
         if (o.Enable3D && o.GraphicsMode != "sw") args.Add("-3d");
-        // Refresh rate is left to the game + monitor now — the launcher no longer passes -hz.
+        // No -hz: the client runs at the monitor/vsync rate (render is decoupled from the sim), so a
+        // refresh-rate hint is vestigial. Omitting it lets the game pick the display's true rate.
         return args;
     }
 

@@ -30,7 +30,15 @@ public class LauncherConfig
 
     public string LauncherUpdateFeed { get; set; } = "https://api.github.com/repos/voicemxil/OpenSO.Launcher/releases/latest";
     public string ClientReleaseFeed { get; set; } = "https://api.github.com/repos/voicemxil/OpenSO/releases/latest";
-    public string ClientManifestUrl { get; set; } = "https://api.openso.org/launcher/manifest.json";
+
+    // The canonical per-RID client distribution manifest (openso-manifest.json). It is the FIRST source
+    // FsoInstaller consults to resolve the game-client full package: a schemaVersion-1 index mapping the
+    // EXACT RID (win-x64 / linux-x64 / osx-x64 / osx-arm64) to a hash-verified full zip. Defaults to the
+    // release asset that always tracks the latest release. This may be repointed at a mirror (e.g. an
+    // api.openso.org endpoint), but a mirror MUST serve the same schemaVersion-1 per-RID schema — the old
+    // single-`full_zip`, no-RID-check API manifest is no longer honoured. See
+    // OpenSO/Documentation/update-manifest.md and BUILD_AND_TEST.md → "Client update source precedence".
+    public string ClientManifestUrl { get; set; } = "https://github.com/voicemxil/OpenSO/releases/latest/download/openso-manifest.json";
     public string TsoAssetsBaseUrl { get; set; } = "https://archive.org/download/TheSimsOnline_201802/TSO.zip";
     public string? TsoAssetsMd5 { get; set; } = "0ad068398192d98fdc2fd423e94c3218";
     public string WebsiteUrl { get; set; } = "https://openso.org";

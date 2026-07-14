@@ -77,7 +77,8 @@ public sealed class NewsService
         try
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(CachePath)!);
-            System.IO.File.WriteAllText(CachePath, JsonSerializer.Serialize(items));
+            // Source-generated (trim-safe) metadata — see LauncherJsonContext.
+            System.IO.File.WriteAllText(CachePath, JsonSerializer.Serialize(items, LauncherJsonContext.Default.ListNewsItem));
         }
         catch { /* non-fatal */ }
     }
@@ -88,7 +89,7 @@ public sealed class NewsService
         {
             if (System.IO.File.Exists(CachePath))
             {
-                var cached = JsonSerializer.Deserialize<List<NewsItem>>(System.IO.File.ReadAllText(CachePath));
+                var cached = JsonSerializer.Deserialize(System.IO.File.ReadAllText(CachePath), LauncherJsonContext.Default.ListNewsItem);
                 if (cached != null) return cached.Count > max ? cached.GetRange(0, max) : cached;
             }
         }

@@ -10,9 +10,13 @@ namespace OpenSO.Launcher.Services;
 public static class RemoteUrl
 {
     public static bool IsHttps(string? url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps;
+        Uri.TryCreate(url, UriKind.Absolute, out var u)
+        && (u.Scheme == Uri.UriSchemeHttps
+            // Plain HTTP is allowed ONLY for loopback: local test fixtures serve from 127.0.0.1, and
+            // loopback traffic never crosses a network a MITM could sit on.
+            || (u.Scheme == Uri.UriSchemeHttp && u.IsLoopback));
 
-    /// <summary>Returns <paramref name="url"/> if it's an absolute HTTPS URL; throws otherwise.</summary>
+    /// <summary>Returns <paramref name="url"/> if it's an absolute HTTPS (or loopback) URL; throws otherwise.</summary>
     public static string RequireHttps(string? url, string what)
     {
         if (!IsHttps(url))

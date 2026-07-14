@@ -19,7 +19,6 @@ public sealed class StatusService
     // Static like DownloadService's client: per-instance HttpClients are never disposed and leak
     // socket handles across launcher restarts/re-instantiations.
     private static readonly HttpClient Http = CreateClient();
-    private static readonly JsonSerializerOptions Opts = new() { PropertyNameCaseInsensitive = true };
 
     public StatusService(LauncherConfig config) => _config = config;
 
@@ -37,7 +36,8 @@ public sealed class StatusService
         try
         {
             var json = await Http.GetStringAsync($"{Api}/userapi/status", ct);
-            return JsonSerializer.Deserialize<ServerStatus>(json, Opts);
+            // Source-generated (trim-safe) metadata; case-insensitive is baked into LauncherJsonContext.
+            return JsonSerializer.Deserialize(json, LauncherJsonContext.Default.ServerStatus);
         }
         catch { return null; } // offline / endpoint unavailable -> caller shows placeholders
     }

@@ -108,11 +108,6 @@ public static class CabExtractor
 
         // 2. Decompress folders on demand and write each file from its folder's data.
         int total = files.Count, done = 0;
-        // Path guard root: trailing separator (blocks same-prefix siblings) + case-insensitive on
-        // Windows (case-varied traversal would slip past an Ordinal check on a case-insensitive FS).
-        var extractRoot = Path.GetFullPath(to);
-        if (!extractRoot.EndsWith(Path.DirectorySeparatorChar)) extractRoot += Path.DirectorySeparatorChar;
-        var pathCmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         var folderData = new Dictionary<int, byte[]>();
         foreach (var f in files)
         {
@@ -125,9 +120,10 @@ public static class CabExtractor
             long start = Math.Min(f.UOff, data.Length);
             long len = Math.Min(f.USize, data.Length - start);
 
-            var dest = Path.GetFullPath(Path.Combine(to, f.Name));
-            if (!dest.StartsWith(extractRoot, pathCmp))
-                throw new IOException($"Blocked unsafe cab entry path: {f.Name}");
+            // Canonicalize + relative-path containment (shared with the zip extractor): rejects
+            // traversal, rooted paths, and sibling-prefix escapes — the old StartsWith check accepted
+            // a sibling whose name began with the destination's.
+            var dest = ArchivePathGuard.ResolveContainedPath(to, f.Name);
             Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
             using (var fs = File.Create(dest)) fs.Write(data, (int)start, (int)len);
 

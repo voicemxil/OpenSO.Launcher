@@ -1,33 +1,71 @@
 name: CI
 
-# Build the launcher and run the headless logic tests on every push/PR, so a regression (a broken
-# SwapIntoPlace, a zip-slip guard that stops guarding, a download that stops verifying its hash) is
-# caught before it can be tagged into a release. Runs on all three OSes because several code paths are
-# platform-specific: the Windows registry probe, the case-insensitive zip/cab-slip guard, and the POSIX
-# unix-file-mode handling in extraction / TempFiles.
+# Build the launcher app and run the headless OpenSO.Launcher.Tests suite on every PR and every push to
+# main. This is the guard against shipping broken asset selection, ZIP-safety regressions, interrupted
+# swaps, lost user data, or invalid update chains — see BUILD_AND_TEST.md "Continuous integration".
+# Runs on all three OSes because several code paths are platform-specific: the Windows registry probe,
+# the case-insensitive zip/cab-slip guard, and the POSIX unix-file-mode handling in extraction / TempFiles.
 
 on:
+  pull_request:
   push:
     branches: ["main"]
-  pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
+  build-and-test:
+    name: Build & test
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-dotnet@v4
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
 
-      - name: Build launcher
+      - name: Build launcher app (Release)
+        # Compiles the shipped Avalonia app. Warnings are informative only (no TreatWarningsAsErrors in
+        # the csproj); any compile error fails this step and the job.
         run: dotnet build OpenSO.Launcher/OpenSO.Launcher.csproj -c Release
 
-      - name: Run logic tests
-        run: dotnet run --project OpenSO.Launcher.Tests/OpenSO.Launcher.Tests.csproj -c Release
+      - name: Run headless logic tests
+        # Mirrors BUILD_AND_TEST.md exactly: `cd OpenSO.Launcher.Tests && dotnet run`. The harness exits
+        # non-zero on any assertion failure, which fails this step (and the job).
+        working-directory: OpenSO.Launcher.Tests
+        run: dotnet run -c Release
+
+  trim-smoke:
+    name: Trimmed publish + smoke self-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Trimmed publish + smoke self-check
+        # The logic tests above compile the sources FRESH, so they never see the trimmer's output. This
+        # step produces the actual trimmed self-contained binary (linux-x64, this runner's RID) and runs
+        # its headless `--smoke` self-check, which exercises the trim-sensitive paths (source-gen JSON,
+        # manifest/feed parsing, RID + version + timestamp logic, ArchivePathGuard). A trimming regression
+        # — a stripped DTO member, a broken source-gen context — surfaces here as a non-zero exit that
+        # fails the job. See BUILD_AND_TEST.md → "Trimmed-binary smoke gate".
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet publish OpenSO.Launcher/OpenSO.Launcher.csproj -c Release -r linux-x64 --self-contained -o publish-smoke
+          chmod +x publish-smoke/OpenSO.Launcher
+          publish-smoke/OpenSO.Launcher --smoke

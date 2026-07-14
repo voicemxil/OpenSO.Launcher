@@ -41,8 +41,13 @@ public partial class App : Application
             // default, which would keep the process alive if any secondary window ever exists.
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
 
+            // --update-game: the game client's handoff on a version mismatch for a Launcher-managed
+            // install (see BUILD_AND_TEST.md → "Game → launcher handoff"). desktop.Args is populated by
+            // Avalonia from the args Program.cs passed to StartWithClassicDesktopLifetime.
+            var updateGame = LauncherArgs.HasUpdateGame(desktop.Args);
+
             // Composition root: build the service graph here (not inside the view-model) and inject it.
-            var vm = new MainViewModel(AppServices.CreateDefault());
+            var vm = new MainViewModel(AppServices.CreateDefault(), updateGame);
             desktop.MainWindow = new MainWindow { DataContext = vm };
 
             // Stop the VM's polling loops (clock tick, server-status poll) when the app shuts
