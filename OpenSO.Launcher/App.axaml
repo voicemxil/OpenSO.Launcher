@@ -8,6 +8,21 @@
     <FluentTheme />
   </Application.Styles>
 
+  <!-- Tray icon: reopen a launcher hidden by the "Minimize to tray" closing behavior, or exit it. -->
+  <TrayIcon.Icons>
+    <TrayIcons>
+      <TrayIcon Icon="/Assets/openso.ico" ToolTipText="OpenSO Launcher" Clicked="TrayOpen_Click">
+        <TrayIcon.Menu>
+          <NativeMenu>
+            <NativeMenuItem Header="Open OpenSO Launcher" Click="TrayOpen_Click"/>
+            <NativeMenuItemSeparator/>
+            <NativeMenuItem Header="Exit" Click="TrayExit_Click"/>
+          </NativeMenu>
+        </TrayIcon.Menu>
+      </TrayIcon>
+    </TrayIcons>
+  </TrayIcon.Icons>
+
   <Application.Resources>
     <ResourceDictionary>
       <!-- Light/dark adaptive palette: neutral grays + a single blue accent.

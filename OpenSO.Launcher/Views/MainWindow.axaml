@@ -303,12 +303,19 @@
             <Border Classes="card">
               <StackPanel Spacing="14">
                 <StackPanel Spacing="5">
+                  <TextBlock Text="Automatic Launcher Updates" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
+                  <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding AutoUpdate}" HorizontalAlignment="Stretch"/>
+                  <TextBlock Classes="sub" TextWrapping="Wrap" Text="When enabled, launcher updates install automatically at startup. When disabled, an update banner appears on the Home tab instead."/>
+                </StackPanel>
+                <StackPanel Spacing="5">
                   <TextBlock Text="Live Desktop Notifications" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding OnOff}" SelectedItem="{Binding LiveNotifications}" HorizontalAlignment="Stretch"/>
+                  <TextBlock Classes="sub" TextWrapping="Wrap" Text="Shows a desktop notification when a launcher or game update is detected (Windows)."/>
                 </StackPanel>
                 <StackPanel Spacing="5">
                   <TextBlock Text="Closing Behavior" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <ComboBox ItemsSource="{Binding ClosingBehaviors}" SelectedItem="{Binding ClosingBehavior}" HorizontalAlignment="Stretch"/>
+                  <TextBlock Classes="sub" TextWrapping="Wrap" Text="Minimize to tray keeps the launcher running in the notification area when you close the window."/>
                 </StackPanel>
               </StackPanel>
             </Border>

@@ -7,6 +7,8 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Styling;
+using OpenSO.Launcher.Services;
+using OpenSO.Launcher.ViewModels;
 
 namespace OpenSO.Launcher.Views;
 
@@ -78,9 +80,25 @@ public partial class MainWindow : Window
     private static Bitmap LoadAsset(string file)
         => new(AssetLoader.Open(new Uri($"avares://OpenSO.Launcher/Assets/{file}")));
 
+    /// <summary>Closing behavior "Minimize to tray": swallow the close and hide instead — the tray
+    /// icon's Open/Exit menu takes over. A real shutdown (tray Exit, self-update restart) sets
+    /// App.ExitRequested and always closes for real.</summary>
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        base.OnClosing(e);
+        if (!App.ExitRequested && DataContext is MainViewModel { MinimizeToTray: true })
+        {
+            e.Cancel = true;
+            Hide();
+        }
+    }
+
     protected override void OnOpened(EventArgs e)
     {
         base.OnOpened(e);
+
+        // Desktop notifications (Windows balloon/toast) need a native window handle.
+        TrayNotifier.Initialize(TryGetPlatformHandle()?.Handle ?? IntPtr.Zero);
 
         // If the compositor granted no transparency (e.g. Mica unavailable on this Windows build),
         // a Transparent window background would leak the desktop through the translucent sidebar.

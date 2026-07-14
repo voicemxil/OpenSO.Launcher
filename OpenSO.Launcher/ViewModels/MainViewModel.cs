@@ -122,12 +122,16 @@ public partial class MainViewModel : ObservableObject
     // ---- Settings (bound on the SETTINGS page) ----------------------------------------------------
     public string[] GraphicsModes { get; } = { "OpenGL", "DirectX", "Software" };
     public string[] OnOff { get; } = { "Disabled", "Enabled" };
-    public string[] ClosingBehaviors { get; } = { "Exit launcher", "Minimize to tray", "Do nothing" };
+    public string[] ClosingBehaviors { get; } = { "Exit launcher", "Minimize to tray" };
 
     [ObservableProperty] private string _graphicsMode = "OpenGL";
     [ObservableProperty] private string _threeDMode = "Disabled";
+    [ObservableProperty] private string _autoUpdate = "Enabled";
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";
+
+    /// <summary>Read by MainWindow's close handler: true when closing should hide to the tray instead.</summary>
+    public bool MinimizeToTray => ClosingBehavior == "Minimize to tray";
 
     /// <summary>Design-time / fallback constructor — composes the default service graph itself. The real
     /// app builds the graph in <see cref="App"/> (the composition root) and calls the injecting ctor.</summary>
@@ -146,8 +150,11 @@ public partial class MainViewModel : ObservableObject
         _launcher = services.Launcher;
         _settings = LauncherSettings.Load();
         GraphicsMode = _settings.GraphicsMode; ThreeDMode = _settings.Enable3D ? "Enabled" : "Disabled";
+        AutoUpdate = _settings.AutoUpdateLauncher ? "Enabled" : "Disabled";
         LiveNotifications = _settings.LiveNotifications ? "Enabled" : "Disabled";
-        ClosingBehavior = _settings.ClosingBehavior;
+        // Sanitize retired values (an old settings.json may still say "Do nothing").
+        ClosingBehavior = Array.IndexOf(ClosingBehaviors, _settings.ClosingBehavior) >= 0
+            ? _settings.ClosingBehavior : "Exit launcher";
 
         StartClock();
         _ = InitializeAsync();
@@ -177,8 +184,15 @@ public partial class MainViewModel : ObservableObject
         if (_settings.Enable3D && ClientInstalled && !RemeshInstalled && !Busy)
             Notify("3D mode is on. Install the 3D mesh pack (Installer tab) for higher-quality models.");
     }
+    partial void OnAutoUpdateChanged(string value) { _settings.AutoUpdateLauncher = value == "Enabled"; _settings.Save(); }
     partial void OnLiveNotificationsChanged(string value) { _settings.LiveNotifications = value == "Enabled"; _settings.Save(); }
     partial void OnClosingBehaviorChanged(string value) { _settings.ClosingBehavior = value; _settings.Save(); }
+
+    /// <summary>Native desktop notification (Windows toast/balloon), gated by the settings toggle.</summary>
+    private void DesktopNotify(string title, string message)
+    {
+        if (LiveNotifications == "Enabled") TrayNotifier.Show(title, message);
+    }
 
     // Both loops are async void (fire-and-forget from the ctor), so ANY escaped exception would kill
     // the loop silently — a frozen clock or a status pill stuck on "Connecting…" for the rest of the
@@ -292,7 +306,17 @@ public partial class MainViewModel : ObservableObject
         var local = NormalizeVersion(InstalledGameVersion);
         // Missing local version => an old install from before version.txt => treat as needing an update.
         GameUpdateAvailable = string.IsNullOrEmpty(local) || !SameVersion(local, server);
+
+        // Desktop-notify a newly detected required game update — once per server version, so the
+        // periodic status poll doesn't re-toast the same update every tick.
+        if (GameUpdateAvailable && _lastNotifiedGameVersion != server)
+        {
+            _lastNotifiedGameVersion = server;
+            DesktopNotify("OpenSO game update", $"A game update was detected — the server is running {ServerGameVersion}.");
+        }
     }
+
+    private string? _lastNotifiedGameVersion;
 
     private static string NormalizeVersion(string? v) => (v ?? "").Trim().TrimStart('v', 'V');
 
@@ -337,7 +361,28 @@ public partial class MainViewModel : ObservableObject
     private async Task CheckLauncherUpdateAsync()
     {
         try { UpdateVersion = await _selfUpdate.CheckForLauncherUpdateAsync(); }
-        catch (Exception ex) { Log.Warn("Launcher update check failed (offline?)", ex); }
+        catch (Exception ex) { Log.Warn("Launcher update check failed (offline?)", ex); return; }
+        if (UpdateVersion == null) return;
+
+        // Auto-update: install without asking (the banner's Update button, unprompted). Skipped while
+        // Busy — an install/update in flight must not be killed by the self-update's restart.
+#if DEBUG
+        // Never auto-apply from a debug/dev build: the release feed is always "newer" than a local
+        // build, so auto-update would instantly overwrite the build under test. The banner (manual
+        // update) stays available.
+        Log.Warn($"Debug build: skipping launcher auto-update to {UpdateVersion}.");
+#else
+        if (_settings.AutoUpdateLauncher && !Busy)
+        {
+            DesktopNotify("OpenSO Launcher update", $"Version {UpdateVersion} was detected — installing now.");
+            Notify($"Updating launcher to {UpdateVersion}…");
+            await ApplyUpdateAsync();
+        }
+        else
+        {
+            DesktopNotify("OpenSO Launcher update", $"Version {UpdateVersion} is available — open the launcher to update.");
+        }
+#endif
     }
 
     private void Notify(string message)
@@ -584,6 +629,7 @@ public partial class MainViewModel : ObservableObject
             var reporter = MakeReporter();
             await _selfUpdate.ApplyLauncherUpdateAsync(reporter);
             StatusLine = "Restarting to finish the update…";
+            App.ExitRequested = true; // the minimize-to-tray close handler must not swallow this close
             // Shut down through the Avalonia lifetime so App cancels background work and Main's
             // process-exit backstop runs; the staged swap script waits for this PID to disappear.
             if (Avalonia.Application.Current?.ApplicationLifetime
