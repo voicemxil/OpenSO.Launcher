@@ -17,6 +17,10 @@
     <PublishReadyToRun>true</PublishReadyToRun>
     <!-- App icon (multi-res .ico from the branding folder) -->
     <ApplicationIcon>Assets/openso.ico</ApplicationIcon>
+    <!-- Local builds: target the machine's own RID so bin/ only gets this platform's native libs
+         (a portable build copies every RID's SkiaSharp/HarfBuzz/etc. into runtimes/). Release
+         publishing is unaffected — the workflow passes -r explicitly, which overrides this. -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkPortableRuntimeIdentifier)</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
