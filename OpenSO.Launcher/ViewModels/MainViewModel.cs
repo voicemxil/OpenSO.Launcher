@@ -471,6 +471,23 @@ public partial class MainViewModel : ObservableObject
                     onUnsupported: code => Notify($"{code} installer not ported yet — install it separately for now."),
                     _shutdownCts.Token);
                 await _activeInstall;
+
+                // Auto-install the 3D mesh pack right after the game (still inside the install gate).
+                // Non-fatal: the game install already succeeded, so a remesh failure only gets a nudge
+                // to retry from the Installer tab.
+                Notify("Game installed. Adding the 3D mesh pack…");
+                try
+                {
+                    _activeInstall = _orchestrator.InstallAsync("RMS", _config.ResolvedInstallRoot(), reporter,
+                        onUnsupported: code => Notify($"{code} installer not available."), _shutdownCts.Token);
+                    await _activeInstall;
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Log.Warn("3D mesh pack auto-install failed after game install", ex);
+                    Notify("Game installed, but the 3D mesh pack failed — you can retry it from the Installer tab.");
+                }
             }
             finally { _installGate.Release(); }
             Notify("Install complete.");
