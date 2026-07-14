@@ -66,8 +66,9 @@
       <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
         <!-- Logo lockup. Source is set per theme in code-behind (on-dark vs on-light wordmark);
              Margin top is bumped on macOS to clear the traffic lights. -->
+        <!-- Same 20px side margins as the PLAY button below, so the wordmark spans its exact width. -->
         <Image Grid.Row="0" x:Name="LogoImage"
-               Height="40" HorizontalAlignment="Left" Margin="22,22,0,8" Stretch="Uniform"/>
+               HorizontalAlignment="Stretch" Margin="20,22,20,8" Stretch="Uniform"/>
 
         <!-- PLAY -->
         <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"

@@ -50,7 +50,7 @@ public partial class MainWindow : Window
             ExtendClientAreaToDecorationsHint = true;
             ExtendClientAreaTitleBarHeightHint = -1;
             if (_logo is not null)
-                _logo.Margin = new Thickness(22, 52, 0, 8);
+                _logo.Margin = new Thickness(20, 52, 20, 8);
 
             // The extended client area has no native title bar, so the window can't be dragged.
             // Make the top strip a drag handle, and push the content below it so it stays clickable.
