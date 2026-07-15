@@ -577,6 +577,17 @@ public partial class MainViewModel : ObservableObject
         StatusLine = $"{r.Stage}: {r.Detail}";
     });
 
+    /// <summary>Returns the memory a big one-off operation (install/update/remesh) allocated back to the
+    /// OS. Extraction works through multi-MB buffers that land on the Large Object Heap; the GC frees
+    /// them but by default neither compacts the LOH nor trims the working set, so Task Manager keeps
+    /// showing the install's peak for the rest of the session. One aggressive, LOH-compacting collect
+    /// after the operation ends releases it. Never called on a hot path.</summary>
+    private static void TrimMemory()
+    {
+        System.Runtime.GCSettings.LargeObjectHeapCompactionMode = System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    }
+
     /// <summary>Central handler for a failed install/update/remesh. A file-in-use failure gets a loud,
     /// specific message naming the locking process (see <see cref="FileLocks"/>) rather than the raw
     /// IOException text buried in the progress subtext; everything else gets a clear "&lt;what&gt; failed".</summary>
@@ -712,7 +723,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException) { /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("Install", ex); }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
     }
 
     private GameLauncher.Options BuildLaunchOptions() => new()
@@ -776,7 +787,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException) { return false; /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("Game update", ex); return false; }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
     }
 
     /// <summary>
@@ -836,7 +847,7 @@ public partial class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException) { /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("3D mesh pack install", ex); }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); }
+        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
     }
 
     [RelayCommand]
