@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -24,7 +25,12 @@ namespace OpenSO.Launcher.Services.Extraction;
 ///    (block N back-references block N-1). DeflateStream has no preset-dictionary API, so we prime
 ///    each block with the previous 32 KB (as "stored" DEFLATE blocks) and trim them off.
 ///
-/// Files are written to disk per folder as their byte ranges are produced. (LZX/Quantum unimplemented.)
+/// MEMORY: blocks reference their cab by PATH, not by bytes — cab bytes are loaded lazily one cab at
+/// a time, and extraction runs folder-by-folder holding only the current folder's decompressed data.
+/// (An earlier version pinned every cab's bytes AND cached every decompressed folder for the whole
+/// run — over 4 GB resident for the TSO set.) Peak memory is one cab + one folder; with purge, each
+/// cab file is deleted from disk the moment its last folder finishes, so the cabs and the (larger)
+/// extracted game still never fully coexist on disk. (LZX/Quantum unimplemented.)
 /// </summary>
 public static class CabExtractor
 {
@@ -39,7 +45,7 @@ public static class CabExtractor
         return Task.Run(() => Run(firstCab, to, progress, purge, ct), ct);
     }
 
-    private sealed class Block { public byte[] Cab = Array.Empty<byte>(); public int Offset; public ushort CBytes; public ushort UcBytes; }
+    private sealed class Block { public string CabPath = ""; public int Offset; public ushort CBytes; public ushort UcBytes; }
     private sealed class Folder { public List<Block> Blocks = new(); }
     private sealed class FileRec { public uint USize; public uint UOff; public int GlobalFolder; public string Name = ""; }
     private sealed class CabMeta { public bool Prev; public string? Next; public List<List<Block>> Folders = new(); public List<(uint USize, uint UOff, ushort IFolder, string Name)> Files = new(); }
@@ -101,47 +107,70 @@ public static class CabExtractor
             cur = meta.Next != null ? Path.Combine(dir, meta.Next) : null;
         }
 
-        // Every cabinet's bytes are now held in memory (Block.Cab), so the on-disk cab files are no
-        // longer needed. Delete them BEFORE writing the (larger) extracted game below — otherwise the
-        // cabs + the extracted files would coexist and roughly double the peak disk usage.
-        if (purge) foreach (var p in processed) try { File.Delete(p); } catch { }
+        // 2. Decompress folder-by-folder (files are grouped by their global folder, order within a
+        //    folder preserved) so only ONE folder's uncompressed data is alive at a time. Cab bytes are
+        //    loaded lazily below with a single-cab cache; with purge, refcounts delete each cab file
+        //    the moment its last folder finishes — the cabs and the (larger) extracted game still never
+        //    fully coexist on disk, without holding either in memory.
+        string? cachedCabPath = null; byte[]? cachedCabBytes = null;
+        byte[] LoadCab(string path)
+        {
+            if (path != cachedCabPath) { cachedCabBytes = File.ReadAllBytes(path); cachedCabPath = path; }
+            return cachedCabBytes!;
+        }
 
-        // 2. Decompress folders on demand and write each file from its folder's data.
+        // How many folders still need each cab (a folder can span cabs, a cab can hold many folders).
+        var cabRefs = new Dictionary<string, int>();
+        foreach (var folder in folders)
+            foreach (var p in folder.Blocks.Select(b => b.CabPath).Distinct())
+                cabRefs[p] = cabRefs.GetValueOrDefault(p) + 1;
+
         int total = files.Count, done = 0;
-        var folderData = new Dictionary<int, byte[]>();
-        foreach (var f in files)
+        foreach (var group in files.GroupBy(f => f.GlobalFolder).OrderBy(g => g.Key))
         {
             ct.ThrowIfCancellationRequested();
-            if (!folderData.TryGetValue(f.GlobalFolder, out var data))
+            var data = DecompressFolder(folders[group.Key].Blocks, LoadCab);
+            foreach (var f in group)
             {
-                data = DecompressFolder(folders[f.GlobalFolder].Blocks);
-                folderData[f.GlobalFolder] = data;
+                ct.ThrowIfCancellationRequested();
+                long start = Math.Min(f.UOff, data.Length);
+                long len = Math.Min(f.USize, data.Length - start);
+
+                // Canonicalize + relative-path containment (shared with the zip extractor): rejects
+                // traversal, rooted paths, and sibling-prefix escapes — the old StartsWith check accepted
+                // a sibling whose name began with the destination's.
+                var dest = ArchivePathGuard.ResolveContainedPath(to, f.Name);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                using (var fs = File.Create(dest)) fs.Write(data, (int)start, (int)len);
+
+                done++;
+                progress?.Report(new ProgressReport("cab", total > 0 ? (double)done / total : 1.0, f.Name));
             }
-            long start = Math.Min(f.UOff, data.Length);
-            long len = Math.Min(f.USize, data.Length - start);
 
-            // Canonicalize + relative-path containment (shared with the zip extractor): rejects
-            // traversal, rooted paths, and sibling-prefix escapes — the old StartsWith check accepted
-            // a sibling whose name began with the destination's.
-            var dest = ArchivePathGuard.ResolveContainedPath(to, f.Name);
-            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-            using (var fs = File.Create(dest)) fs.Write(data, (int)start, (int)len);
-
-            done++;
-            progress?.Report(new ProgressReport("cab", total > 0 ? (double)done / total : 1.0, f.Name));
+            // This folder is done — release any cab no other folder still needs.
+            if (purge)
+                foreach (var p in folders[group.Key].Blocks.Select(b => b.CabPath).Distinct())
+                    if (--cabRefs[p] == 0)
+                    {
+                        if (p == cachedCabPath) { cachedCabPath = null; cachedCabBytes = null; }
+                        try { File.Delete(p); } catch { }
+                    }
         }
+
+        // Backstop: folders with no files never decrement their refcounts — sweep whatever remains.
+        if (purge) foreach (var p in processed) try { if (File.Exists(p)) File.Delete(p); } catch { }
 
         progress?.Report(new ProgressReport("cab", 1.0, "done"));
     }
 
-    private static byte[] DecompressFolder(List<Block> blocks)
+    private static byte[] DecompressFolder(List<Block> blocks, Func<string, byte[]> loadCab)
     {
         using var outMs = new MemoryStream();
         byte[] window = Array.Empty<byte>();
         byte[] pending = Array.Empty<byte>();
         foreach (var blk in blocks)
         {
-            var raw = new ReadOnlySpan<byte>(blk.Cab, blk.Offset, blk.CBytes);
+            var raw = new ReadOnlySpan<byte>(loadCab(blk.CabPath), blk.Offset, blk.CBytes);
             if (blk.UcBytes == 0) { pending = raw.Slice(2).ToArray(); continue; } // split → carry to next cab
 
             byte[] payload;
@@ -215,6 +244,8 @@ public static class CabExtractor
         return ms.ToArray();
     }
 
+    /// <summary>Parses one cabinet's header/folder/file tables. The cab's bytes are read transiently —
+    /// blocks reference the FILE PATH (+ offset), so nothing from <paramref name="file"/> stays resident.</summary>
     private static CabMeta Parse(string file)
     {
         var d = File.ReadAllBytes(file);
@@ -244,7 +275,7 @@ public static class CabExtractor
                 p += 4;
                 ushort cB = BitConverter.ToUInt16(d, p); p += 2;
                 ushort ucB = BitConverter.ToUInt16(d, p); p += 2;
-                blocks.Add(new Block { Cab = d, Offset = p, CBytes = cB, UcBytes = ucB });
+                blocks.Add(new Block { CabPath = file, Offset = p, CBytes = cB, UcBytes = ucB });
                 p += cB;
             }
             meta.Folders.Add(blocks);
