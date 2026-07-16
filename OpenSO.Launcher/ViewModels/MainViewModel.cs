@@ -141,14 +141,14 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _serverGameVersion = "—";
     [ObservableProperty] private string _serverTimeText = "—";
 
-    /// <summary>City render for the SERVER STATUS card ({api}/userapi/city/{shardId}/city.png). Null —
-    /// and the image collapsed — until the probe confirms the server actually serves it (older servers
-    /// don't have the endpoint). Probed once per shard id; a manual Refresh re-probes.</summary>
+    /// <summary>City map thumbnail for the SERVER STATUS card — the literal thumbnail.png shipped with
+    /// the map (&lt;install&gt;/Content/Cities/city_{CityMapId}/thumbnail.png), loaded from the local
+    /// client install. Null — and the banner collapsed — until the client is installed.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasCityThumbnail))]
-    private string? _cityThumbnailUrl;
-    public bool HasCityThumbnail => CityThumbnailUrl != null;
-    private int? _cityThumbProbedShard;
+    private Avalonia.Media.Imaging.Bitmap? _cityThumbnail;
+    public bool HasCityThumbnail => CityThumbnail != null;
+    private string? _cityThumbLoadedFrom;
     private DateTime _serverTimeUtc;
     private DateTime _serverTimeSyncedAtUtc;
 
@@ -381,15 +381,6 @@ public partial class MainViewModel : ObservableObject
             TopLots.Add(l);
         }
 
-        // City thumbnail: probe once per shard (not every 10s poll) whether the server serves
-        // city.png; older servers don't, and the card simply shows no image then.
-        var shardId = shard?.Id ?? 1;
-        if (_cityThumbProbedShard != shardId)
-        {
-            _cityThumbProbedShard = shardId;
-            CityThumbnailUrl = await _status.GetCityThumbnailUrlAsync(shardId, _shutdownCts.Token);
-        }
-
         RecomputeGameUpdate(); // server version just refreshed — re-check it against the installed client
     }
 
@@ -419,6 +410,7 @@ public partial class MainViewModel : ObservableObject
             AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
             RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
             StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
+            LoadCityThumbnail(); // install state just changed — the map thumbnail may have (dis)appeared
             RecomputeGameUpdate();
         }
         catch (Exception ex)
@@ -454,6 +446,27 @@ public partial class MainViewModel : ObservableObject
 
     private string? _lastNotifiedGameVersion;
 
+
+    /// <summary>(Re)loads the city map thumbnail from the installed client — the literal thumbnail.png
+    /// the map ships (Content/Cities/city_{CityMapId}/thumbnail.png). No-op when the same file is
+    /// already showing; clears the banner when the client is gone. Corrupt/unreadable image => no banner.</summary>
+    private void LoadCityThumbnail()
+    {
+        try
+        {
+            var path = ClientInstalled && _fsoPath != null
+                ? System.IO.Path.Combine(_fsoPath, "Content", "Cities", $"city_{_config.CityMapId}", "thumbnail.png")
+                : null;
+            if (path != null && !System.IO.File.Exists(path)) path = null;
+            if (path == _cityThumbLoadedFrom) return;
+
+            var old = CityThumbnail;
+            CityThumbnail = path != null ? new Avalonia.Media.Imaging.Bitmap(path) : null;
+            _cityThumbLoadedFrom = path;
+            old?.Dispose();
+        }
+        catch { /* unreadable/corrupt image -> just no banner */ }
+    }
 
     /// <summary>Reads the client's stamped version (the release CI writes &lt;install&gt;/version.txt).</summary>
     private static string? ReadGameVersion(string? fsoDir)
@@ -539,7 +552,6 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
-        _cityThumbProbedShard = null; // manual refresh re-probes the city thumbnail too
         try
         {
             var statusTask = LoadStatusAsync();              // refreshes server stats + recomputes game-update state

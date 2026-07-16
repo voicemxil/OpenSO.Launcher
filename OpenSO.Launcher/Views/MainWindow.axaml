@@ -151,11 +151,11 @@
                   </StackPanel>
                 </Grid>
 
-                <!-- City render banner. Only present when the server serves userapi/city/{shard}/city.png —
-                     the VM probes once per shard and leaves this collapsed on servers without the endpoint. -->
+                <!-- City map banner — the thumbnail.png shipped with the map, read from the local client
+                     install (Content/Cities/city_{CityMapId}/). Collapsed until the client is installed. -->
                 <Border CornerRadius="8" ClipToBounds="True" Height="110"
                         Background="{DynamicResource CardAlt}" IsVisible="{Binding HasCityThumbnail}">
-                  <Image asyncImageLoader:ImageLoader.Source="{Binding CityThumbnailUrl}" Stretch="UniformToFill"/>
+                  <Image Source="{Binding CityThumbnail}" Stretch="UniformToFill"/>
                 </Border>
                 <Grid ColumnDefinitions="*,*,*">
                   <StackPanel Grid.Column="0">

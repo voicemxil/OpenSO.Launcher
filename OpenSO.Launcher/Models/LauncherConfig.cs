@@ -44,6 +44,9 @@ public class LauncherConfig
     public string WebsiteUrl { get; set; } = "https://openso.org";
     public string ApiBaseUrl { get; set; } = "https://api.openso.org";
     public string GameServerHost { get; set; } = "play.openso.org";
+    /// <summary>The city map the server's shard runs, as the client's Content/Cities folder suffix —
+    /// city_{id}/thumbnail.png is shown in the launcher's SERVER STATUS card. 0100 is the standard map.</summary>
+    public string CityMapId { get; set; } = "0100";
     public string? InstallPath { get; set; }
     public Dictionary<string, string> ResourceCentral { get; set; } = new()
     {
