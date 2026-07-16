@@ -140,6 +140,15 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _serverOnline;
     [ObservableProperty] private string _serverGameVersion = "—";
     [ObservableProperty] private string _serverTimeText = "—";
+
+    /// <summary>City render for the SERVER STATUS card ({api}/userapi/city/{shardId}/city.png). Null —
+    /// and the image collapsed — until the probe confirms the server actually serves it (older servers
+    /// don't have the endpoint). Probed once per shard id; a manual Refresh re-probes.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasCityThumbnail))]
+    private string? _cityThumbnailUrl;
+    public bool HasCityThumbnail => CityThumbnailUrl != null;
+    private int? _cityThumbProbedShard;
     private DateTime _serverTimeUtc;
     private DateTime _serverTimeSyncedAtUtc;
 
@@ -372,6 +381,15 @@ public partial class MainViewModel : ObservableObject
             TopLots.Add(l);
         }
 
+        // City thumbnail: probe once per shard (not every 10s poll) whether the server serves
+        // city.png; older servers don't, and the card simply shows no image then.
+        var shardId = shard?.Id ?? 1;
+        if (_cityThumbProbedShard != shardId)
+        {
+            _cityThumbProbedShard = shardId;
+            CityThumbnailUrl = await _status.GetCityThumbnailUrlAsync(shardId, _shutdownCts.Token);
+        }
+
         RecomputeGameUpdate(); // server version just refreshed — re-check it against the installed client
     }
 
@@ -521,6 +539,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
+        _cityThumbProbedShard = null; // manual refresh re-probes the city thumbnail too
         try
         {
             var statusTask = LoadStatusAsync();              // refreshes server stats + recomputes game-update state

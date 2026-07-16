@@ -150,6 +150,13 @@
                     <TextBlock Text="{Binding ServerStatus}" Foreground="{DynamicResource Ink2}" VerticalAlignment="Center"/>
                   </StackPanel>
                 </Grid>
+
+                <!-- City render banner. Only present when the server serves userapi/city/{shard}/city.png —
+                     the VM probes once per shard and leaves this collapsed on servers without the endpoint. -->
+                <Border CornerRadius="8" ClipToBounds="True" Height="110"
+                        Background="{DynamicResource CardAlt}" IsVisible="{Binding HasCityThumbnail}">
+                  <Image asyncImageLoader:ImageLoader.Source="{Binding CityThumbnailUrl}" Stretch="UniformToFill"/>
+                </Border>
                 <Grid ColumnDefinitions="*,*,*">
                   <StackPanel Grid.Column="0">
                     <TextBlock Text="{Binding PlayersOnline}" Foreground="{DynamicResource Accent}" FontSize="30" FontWeight="Bold"/>

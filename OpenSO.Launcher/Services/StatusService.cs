@@ -41,4 +41,23 @@ public sealed class StatusService
         }
         catch { return null; } // offline / endpoint unavailable -> caller shows placeholders
     }
+
+    /// <summary>Returns the shard's city thumbnail URL ({api}/userapi/city/{shardId}/city.png) when the
+    /// server actually serves an image there, else null. The endpoint doesn't exist on older servers
+    /// (the city route only knows per-lot locations), so the caller probes ONCE per shard and simply
+    /// hides the thumbnail when this returns null — the feature lights up when the server gains it.</summary>
+    public async Task<string?> GetCityThumbnailUrlAsync(int shardId, CancellationToken ct = default)
+    {
+        var url = $"{Api}/userapi/city/{shardId}/city.png";
+        try
+        {
+            // GET with headers-only read: HEAD support is inconsistent, and this never downloads the body.
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
+            return resp.IsSuccessStatusCode
+                   && resp.Content.Headers.ContentType?.MediaType?.StartsWith("image/") == true
+                ? url : null;
+        }
+        catch { return null; }
+    }
 }
