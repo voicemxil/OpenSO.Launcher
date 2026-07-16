@@ -97,6 +97,7 @@ internal static class Program
         Test("LauncherArgs.HasUpdateGame recognizes --update-game and ignores unknown args", TestLauncherArgsRecognizesUpdateGame);
         Test("DeltaUpdateEngine.NeedsUpdate decides update-needed from two version strings", TestNeedsUpdateDecisionLogic);
         Test("GameLauncher.Launch refreshes the handoff marker on every launch attempt", TestGameLauncherRefreshesMarkerOnLaunchAttempt);
+        Test("GameLauncher.BuildArgs always passes the 2D/3D mode explicitly (game defaults to 3D)", TestGameLauncherBuildArgsExplicitDimensionMode);
         await Test("FsoInstaller.InstallAsync writes the handoff marker after a successful full install", TestFsoInstallWritesHandoffMarker);
         await Test("DeltaUpdateEngine.TryDeltaUpdateAsync writes the handoff marker after a successful delta", TestDeltaUpdateWritesHandoffMarker);
 
@@ -1374,6 +1375,18 @@ internal static class Program
         Assert(!LauncherArgs.HasUpdateGame(new[] { "--some-other-flag" }), "unrelated/unknown args are ignored");
         Assert(!LauncherArgs.HasUpdateGame(Array.Empty<string>()), "no args means no flag");
         Assert(!LauncherArgs.HasUpdateGame(null), "a null args array is treated as no flag (never throws)");
+    }
+
+    private static void TestGameLauncherBuildArgsExplicitDimensionMode()
+    {
+        // The game itself defaults to 3D, so the launcher must state the mode either way:
+        // absence of -3d no longer implies 2D.
+        var args3d = GameLauncher.BuildArgs(new GameLauncher.Options { Enable3D = true, GraphicsMode = "dx" });
+        Assert(args3d.Contains("-3d") && !args3d.Contains("-2d"), "3D enabled passes -3d");
+        var args2d = GameLauncher.BuildArgs(new GameLauncher.Options { Enable3D = false, GraphicsMode = "dx" });
+        Assert(args2d.Contains("-2d") && !args2d.Contains("-3d"), "3D disabled passes -2d explicitly");
+        var argsSw = GameLauncher.BuildArgs(new GameLauncher.Options { Enable3D = true, GraphicsMode = "sw" });
+        Assert(argsSw.Contains("-2d") && !argsSw.Contains("-3d"), "software mode implies 2D even with 3D enabled");
     }
 
     private static void TestNeedsUpdateDecisionLogic()

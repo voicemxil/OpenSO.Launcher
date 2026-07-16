@@ -19,8 +19,8 @@ public sealed class GameLauncher
     public sealed class Options
     {
         /// <summary>"ogl" (OpenGL), "dx" (DirectX, Windows only), or "sw" (software).</summary>
-        public string GraphicsMode { get; set; } = "ogl";
-        public bool Enable3D { get; set; } = false;
+        public string GraphicsMode { get; set; } = "dx";
+        public bool Enable3D { get; set; } = true;
         /// <summary>Game language code (0 = English), passed as -lang.</summary>
         public int LanguageCode { get; set; } = 0;
         public bool Windowed { get; set; } = true;
@@ -96,7 +96,10 @@ public sealed class GameLauncher
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) gfx = "ogl";
         args.Add($"-{gfx}");
 
+        // 3D is the game's own default, so the mode is always passed explicitly — "-2d" restores the
+        // classic pipeline (absence of "-3d" no longer implies it). Software mode implies 2D.
         if (o.Enable3D && o.GraphicsMode != "sw") args.Add("-3d");
+        else args.Add("-2d");
         // No -hz: the client runs at the monitor/vsync rate (render is decoupled from the sim), so a
         // refresh-rate hint is vestigial. Omitting it lets the game pick the display's true rate.
         return args;

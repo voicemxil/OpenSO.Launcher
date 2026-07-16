@@ -172,8 +172,8 @@ public partial class MainViewModel : ObservableObject
     public string[] OnOff { get; } = { "Disabled", "Enabled" };
     public string[] ClosingBehaviors { get; } = { "Exit launcher", "Minimize to tray" };
 
-    [ObservableProperty] private string _graphicsMode = "OpenGL";
-    [ObservableProperty] private string _threeDMode = "Disabled";
+    [ObservableProperty] private string _graphicsMode = IsWindows ? "DirectX" : "OpenGL";
+    [ObservableProperty] private string _threeDMode = "Enabled";
     [ObservableProperty] private string _autoUpdate = "Enabled";
     [ObservableProperty] private string _liveNotifications = "Enabled";
     [ObservableProperty] private string _closingBehavior = "Exit launcher";

@@ -11,8 +11,10 @@ namespace OpenSO.Launcher.Models;
 /// </summary>
 public sealed class LauncherSettings
 {
-    public string GraphicsMode { get; set; } = "OpenGL";
-    public bool Enable3D { get; set; } = false;
+    // Defaults: DirectX where available (Windows) and the 3D feature set on — matching the game's own
+    // defaults. Existing settings.json files carry explicit values, so current users keep their choices.
+    public string GraphicsMode { get; set; } = OperatingSystem.IsWindows() ? "DirectX" : "OpenGL";
+    public bool Enable3D { get; set; } = true;
     public bool AutoUpdateLauncher { get; set; } = true;
     public bool LiveNotifications { get; set; } = true;
     public string ClosingBehavior { get; set; } = "Exit launcher";
