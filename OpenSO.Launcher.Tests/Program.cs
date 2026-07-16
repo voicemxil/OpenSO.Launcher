@@ -110,6 +110,10 @@ internal static class Program
         Test("PollGate.Nudge is coalesced and never throws even with no waiter / repeated calls", TestPollGateNudgeCoalesces);
         Test("PollGate.TryEnter/Release guard exclusive in-flight ownership (reentrancy guard)", TestPollGateTryEnterGuardsReentrancy);
 
+        // PHASE 6 — Disk-space pre-flight: measure the install path's own filesystem, not the path root
+        // (on immutable Linux distros "/" is a read-only overlay reporting 0 bytes free — Bazzite bug).
+        Test("DiskSpace.EnsureFreeSpace probes the target's filesystem and tolerates not-yet-created paths", TestDiskSpaceEnsureFreeSpace);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -1641,6 +1645,31 @@ internal static class Program
     private static void Assert(bool cond, string what)
     {
         if (!cond) throw new Exception("assertion failed: " + what);
+    }
+
+    private static void TestDiskSpaceEnsureFreeSpace()
+    {
+        var tmp = NewTmp();
+        // A not-yet-created install dir must not throw: the check walks up to the nearest existing
+        // ancestor rather than statvfs-ing a missing path (which surfaces as IOException on Unix).
+        var missing = Path.Combine(tmp, "not", "created", "yet");
+        DiskSpace.EnsureFreeSpace(missing, 1, "run the disk-space test");
+        Assert(true, "a 1-byte requirement on a not-yet-created path passes without throwing");
+
+        // An impossible requirement must throw, and the message must name the probed directory —
+        // the deepest EXISTING ancestor of the target — not the path root.
+        try
+        {
+            DiskSpace.EnsureFreeSpace(missing, long.MaxValue, "run the disk-space test");
+            Assert(false, "an impossible requirement throws IOException");
+        }
+        catch (IOException ex)
+        {
+            Assert(ex.Message.Contains("Not enough free disk space to run the disk-space test"),
+                "the error explains what ran out of space");
+            Assert(ex.Message.Contains(Path.GetFullPath(tmp)),
+                "the error names the probed directory (nearest existing ancestor), not the path root");
+        }
     }
 
     private static string NewTmp()

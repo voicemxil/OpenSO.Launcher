@@ -38,6 +38,7 @@
     <Compile Include="..\OpenSO.Launcher\Services\LauncherHandoff.cs" Link="src\LauncherHandoff.cs" />
     <Compile Include="..\OpenSO.Launcher\LauncherArgs.cs" Link="src\LauncherArgs.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\Installers\DiskSpace.cs" Link="src\DiskSpace.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\FsoInstaller.cs" Link="src\FsoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\TsoInstaller.cs" Link="src\TsoInstaller.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\MonoInstaller.cs" Link="src\MonoInstaller.cs" />

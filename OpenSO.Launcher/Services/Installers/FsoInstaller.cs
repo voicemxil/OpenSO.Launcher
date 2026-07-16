@@ -42,8 +42,8 @@ public sealed class FsoInstaller : IComponentInstaller
     {
         // Pre-flight: the install peaks at zip (temp) + staged extract + old-install backup coexisting.
         // Fail up front with a clear message instead of a cryptic mid-extract I/O error on a full disk.
-        EnsureFreeSpace(installPath);
-        EnsureFreeSpace(Path.GetTempPath());
+        DiskSpace.EnsureFreeSpace(installPath, MinFreeBytes, "install the OpenSO client");
+        DiskSpace.EnsureFreeSpace(Path.GetTempPath(), MinFreeBytes, "install the OpenSO client");
 
         // A reinstall/update swaps the whole install dir aside; if the game is running from it the swap
         // fails on Windows (locked dir) and leaves a confusing error. Refuse up front with a clear one.
@@ -236,22 +236,6 @@ public sealed class FsoInstaller : IComponentInstaller
     // Peak usage: the ~350 MB client zip (temp) + the ~800 MB staged extract + the old install held
     // as a backup during the swap. 1.5 GB gives that headroom (same pattern as TsoInstaller).
     private const long MinFreeBytes = 1536L * 1024 * 1024;
-
-    private static void EnsureFreeSpace(string path)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrEmpty(root)) return;
-            var di = new DriveInfo(root);
-            if (di.IsReady && di.AvailableFreeSpace < MinFreeBytes)
-                throw new IOException(
-                    $"Not enough free disk space to install the OpenSO client: about {MinFreeBytes >> 20} MB is needed, " +
-                    $"but only {di.AvailableFreeSpace >> 20} MB is free on {root}. Free up space and try again.");
-        }
-        catch (IOException) { throw; }
-        catch { /* DriveInfo unavailable for this path — skip the pre-flight check rather than block. */ }
-    }
 
     /// <summary>A resolved client download: the package URL plus the manifest's SHA-256 when one is known
     /// (or GitHub's release-asset digest for the fallback path; null when neither source supplies a hash).</summary>

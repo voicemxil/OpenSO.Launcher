@@ -1,0 +1,75 @@
+name: Linux test build
+
+# One-off Linux build for handing a hotfix to a bug reporter BEFORE cutting a release.
+# Run it from the Actions tab (pick the branch with the fix); it publishes the same trimmed
+# self-contained linux-x64 build release.yml would, runs the --smoke self-check, and uploads
+# the zip as a workflow artifact. Testers download it from the run's Artifacts section
+# (a GitHub login is required to download artifacts).
+#
+# IMPORTANT — the version defaults to 999.0.0 on purpose. SelfUpdateService compares the
+# assembly version against releases/latest at startup and, with auto-update on (the default),
+# swaps in the latest release when it looks newer — which would silently replace the test
+# build with the very release being debugged. 999.0.0 sorts above any real release, so the
+# test build never self-updates. It also makes test builds obvious in logs/screenshots.
+# The build is a throwaway: testers should delete it and install a real release afterwards.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Assembly version for the test build (keep above every published release so self-update never replaces it)"
+        required: false
+        default: "999.0.0"
+
+jobs:
+  build:
+    name: Publish linux-x64 test build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish (linux-x64)
+        # Mirrors release.yml's publish step (trimmed, self-contained, multi-file) so the tester
+        # runs exactly what a release would ship — just with the test version stamped in.
+        run: |
+          dotnet publish OpenSO.Launcher/OpenSO.Launcher.csproj -c Release -r linux-x64 --self-contained true \
+            -p:Version=${{ github.event.inputs.version || '999.0.0' }} -p:PublishSingleFile=false -o publish
+
+      - name: Smoke self-check
+        # Same trimmed-binary gate as the release: a build that fails its own --smoke check is
+        # not worth shipping to a tester.
+        run: |
+          set -euo pipefail
+          chmod +x publish/OpenSO.Launcher
+          publish/OpenSO.Launcher --smoke
+
+      - name: Zip
+        run: ( cd publish && zip -r "../OpenSO.Launcher-linux-x64-test.zip" . )
+
+      - name: Summarize
+        run: |
+          SHA_SHORT="$(git rev-parse --short HEAD)"
+          {
+            echo "### Linux test build"
+            echo ""
+            echo "- Branch/ref: \`${GITHUB_REF_NAME}\` @ \`${SHA_SHORT}\`"
+            echo "- Version: \`${{ github.event.inputs.version || '999.0.0' }}\` (won't self-update over a real release)"
+            echo "- Size: **$(du -h OpenSO.Launcher-linux-x64-test.zip | cut -f1)**"
+            echo ""
+            echo "Download it from this run's **Artifacts** section below. Tester instructions:"
+            echo '```'
+            echo "unzip OpenSO.Launcher-linux-x64-test.zip -d openso-test"
+            echo "cd openso-test && chmod +x OpenSO.Launcher && ./OpenSO.Launcher"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO.Launcher-linux-x64-test
+          path: OpenSO.Launcher-linux-x64-test.zip
+          retention-days: 14
+          if-no-files-found: error

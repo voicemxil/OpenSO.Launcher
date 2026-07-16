@@ -40,8 +40,8 @@ public sealed class TsoInstaller : IComponentInstaller
         // Pre-flight: this install needs the download + unpacked cabs + the extracted game on disk.
         // Check up front (both the install volume and temp) so we fail with a clear message instead of
         // running out of space partway through the cab extraction.
-        EnsureFreeSpace(installPath);
-        EnsureFreeSpace(Path.GetTempPath());
+        DiskSpace.EnsureFreeSpace(installPath, MinFreeBytes, "install The Sims Online");
+        DiskSpace.EnsureFreeSpace(Path.GetTempPath(), MinFreeBytes, "install The Sims Online");
 
         var source = _config.ResourceCentral.TryGetValue("TheSimsOnline", out var url)
             ? url : _config.TsoAssetsBaseUrl;
@@ -101,20 +101,4 @@ public sealed class TsoInstaller : IComponentInstaller
     // The install peaks at the download (~1.3 GB) coexisting with the unpacked cabs (~1.3 GB), then the
     // extracted game (~2 GB) after both are freed. Require a safe margin so we never stall mid-extraction.
     private const long MinFreeBytes = 4L * 1024 * 1024 * 1024;
-
-    private static void EnsureFreeSpace(string path)
-    {
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(path));
-            if (string.IsNullOrEmpty(root)) return;
-            var di = new DriveInfo(root);
-            if (di.IsReady && di.AvailableFreeSpace < MinFreeBytes)
-                throw new IOException(
-                    $"Not enough free disk space to install The Sims Online: about {MinFreeBytes >> 30} GB is needed, " +
-                    $"but only {di.AvailableFreeSpace >> 30} GB is free on {root}. Free up space and try again.");
-        }
-        catch (IOException) { throw; }
-        catch { /* DriveInfo unavailable for this path — skip the pre-flight check rather than block. */ }
-    }
 }
