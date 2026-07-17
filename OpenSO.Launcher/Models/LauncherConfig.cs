@@ -46,8 +46,8 @@ public class LauncherConfig
     public string GameServerHost { get; set; } = "play.openso.org";
     /// <summary>FALLBACK city map for the SERVER STATUS card thumbnail (Content/Cities folder suffix —
     /// city_{id}/thumbnail.png), used only while the server's /userapi/status hasn't advertised the
-    /// active shard's map (shards[].map). 0100 is the classic Test Center / Sunrise Crater map.</summary>
-    public string CityMapId { get; set; } = "0100";
+    /// active shard's map (shards[].map). 0101 matches the Genesis shard's map.</summary>
+    public string CityMapId { get; set; } = "0101";
     public string? InstallPath { get; set; }
     public Dictionary<string, string> ResourceCentral { get; set; } = new()
     {
