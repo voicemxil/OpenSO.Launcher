@@ -156,7 +156,10 @@ public sealed class SelfUpdateService : ISelfUpdateService
             sb.AppendLine($"xcopy /E /Y /I \"{sourceDir}\\*\" \"{appDir}\\\" >NUL");
             sb.AppendLine($"start \"\" \"{exe}\"");
             sb.AppendLine($"rmdir /S /Q \"{stagingRoot}\"");
-            sb.AppendLine("del \"%~f0\"");
+            // A plain `del "%~f0"` line makes cmd re-read the (now deleted) file for the next
+            // command and strand a window on "The batch file cannot be found." The (goto) idiom
+            // parses the whole line first, ends batch processing, then deletes — no re-read.
+            sb.AppendLine("(goto) 2>nul & del \"%~f0\"");
             File.WriteAllText(bat, sb.ToString());
             Process.Start(new ProcessStartInfo("cmd.exe", $"/c start \"\" /min \"{bat}\"")
             { UseShellExecute = false, CreateNoWindow = true });
