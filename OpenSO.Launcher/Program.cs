@@ -55,6 +55,9 @@ internal static class Program
     public static AppBuilder BuildAvaloniaApp() =>
         AppBuilder.Configure<App>()
             .UsePlatformDetect()
-            // No .WithInterFont(): use the OS system font (SF Pro on macOS, Segoe UI on Windows).
+            // Inter is embedded for BRAND text only (the OPEN ALPHA badge — Inter Extra Bold, per the
+            // design system). The default FontFamily stays the OS system font (SF Pro / Segoe UI);
+            // brand text opts in via FontFamily="fonts:Inter#Inter".
+            .WithInterFont()
             .LogToTrace();
 }

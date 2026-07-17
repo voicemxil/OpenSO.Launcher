@@ -69,8 +69,15 @@
         <!-- Logo lockup. Source is set per theme in code-behind (on-dark vs on-light wordmark);
              Margin top is bumped on macOS to clear the traffic lights. -->
         <!-- Same 20px side margins as the PLAY button below, so the wordmark spans its exact width. -->
-        <Image Grid.Row="0" x:Name="LogoImage"
-               HorizontalAlignment="Stretch" Margin="20,22,20,8" Stretch="Uniform"/>
+        <StackPanel Grid.Row="0">
+          <Image x:Name="LogoImage"
+                 HorizontalAlignment="Stretch" Margin="20,22,20,8" Stretch="Uniform"/>
+          <!-- Build-phase badge. Inter Extra Bold per the design system (Inter is embedded just for
+               brand text; the rest of the UI stays on the OS system font). -->
+          <TextBlock Text="OPEN ALPHA" HorizontalAlignment="Center" Margin="20,0,20,0"
+                     FontFamily="fonts:Inter#Inter" FontWeight="ExtraBold" FontSize="13"
+                     LetterSpacing="3" Foreground="{DynamicResource TealFill}"/>
+        </StackPanel>
 
         <!-- PLAY -->
         <Button Grid.Row="1" Margin="20,12,20,6" Command="{Binding PrimaryActionCommand}" IsEnabled="{Binding !Busy}"

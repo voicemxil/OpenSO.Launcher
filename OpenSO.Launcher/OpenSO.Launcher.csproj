@@ -77,7 +77,9 @@
     <PackageReference Include="Avalonia" Version="12.*" />
     <PackageReference Include="Avalonia.Desktop" Version="12.*" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.*" />
-    <!-- No Inter font package: the launcher uses the OS system font (SF Pro / Segoe UI). -->
+    <!-- Embedded Inter (brand font) — used only for brand text like the OPEN ALPHA badge; the app's
+         default font remains the OS system font (SF Pro / Segoe UI). -->
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.*" />
     <!-- MVVM helpers -->
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
     <!-- Async URL->image loading for lot thumbnails (Avalonia can't bind remote URLs natively) -->
