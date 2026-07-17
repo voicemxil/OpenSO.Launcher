@@ -608,6 +608,20 @@ public partial class MainViewModel : ObservableObject
         StatusLine = $"{r.Stage}: {r.Detail}";
     });
 
+    /// <summary>Restores the idle UI state when an install/update/remesh ends. On success the bar is left
+    /// FULL rather than reset: the installers' final 1.0 report and the old unconditional `Progress = 0`
+    /// in the wrappers' finally blocks landed in the same UI-thread batch, so a completed bar never
+    /// actually rendered — users watched it top out at the last slow stage (the ~90% extraction band) and
+    /// then empty. Leaving it at 1.0 keeps a visibly finished bar until the next operation starts (every
+    /// entry point resets Progress to 0 up front).</summary>
+    private void EndOperation(bool succeeded)
+    {
+        Busy = false;
+        ProgressIndeterminate = false;
+        Progress = succeeded ? 1 : 0;
+        if (!succeeded) ProgressDetail = "";
+    }
+
     /// <summary>Returns the memory a big one-off operation (install/update/remesh) allocated back to the
     /// OS. Extraction works through multi-MB buffers that land on the Large Object Heap; the GC frees
     /// them but by default neither compacts the LOH nor trims the working set, so Task Manager keeps
@@ -721,6 +735,7 @@ public partial class MainViewModel : ObservableObject
         ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify("Preparing installation…");
+        bool ok = false;
         try
         {
             var reporter = MakeReporter();
@@ -751,10 +766,11 @@ public partial class MainViewModel : ObservableObject
             }
             finally { _installGate.Release(); }
             Notify("Install complete.");
+            ok = true;
         }
         catch (OperationCanceledException) { /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("Install", ex); }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
+        finally { EndOperation(ok); await RefreshAsync(); TrimMemory(); }
     }
 
     private GameLauncher.Options BuildLaunchOptions() => new()
@@ -782,6 +798,7 @@ public partial class MainViewModel : ObservableObject
         ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify($"Updating the game to match the server ({ServerGameVersion})…");
+        bool ok = false;
         try
         {
             var reporter = MakeReporter();
@@ -814,11 +831,12 @@ public partial class MainViewModel : ObservableObject
                 }
             }
             finally { _installGate.Release(); }
+            ok = true;
             return true;
         }
         catch (OperationCanceledException) { return false; /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("Game update", ex); return false; }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
+        finally { EndOperation(ok); await RefreshAsync(); TrimMemory(); }
     }
 
     /// <summary>
@@ -863,6 +881,7 @@ public partial class MainViewModel : ObservableObject
         ClearError();
         Busy = true; Progress = 0; Section = "DOWNLOADS";
         Notify("Installing the 3D mesh pack…");
+        bool ok = false;
         try
         {
             var reporter = MakeReporter();
@@ -875,10 +894,11 @@ public partial class MainViewModel : ObservableObject
             }
             finally { _installGate.Release(); }
             Notify("3D mesh pack installed.");
+            ok = true;
         }
         catch (OperationCanceledException) { /* launcher closing */ }
         catch (Exception ex) { HandleOperationFailure("3D mesh pack install", ex); }
-        finally { Busy = false; Progress = 0; ProgressDetail = ""; await RefreshAsync(); TrimMemory(); }
+        finally { EndOperation(ok); await RefreshAsync(); TrimMemory(); }
     }
 
     [RelayCommand]
