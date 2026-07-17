@@ -44,8 +44,9 @@ public class LauncherConfig
     public string WebsiteUrl { get; set; } = "https://openso.org";
     public string ApiBaseUrl { get; set; } = "https://api.openso.org";
     public string GameServerHost { get; set; } = "play.openso.org";
-    /// <summary>The city map the server's shard runs, as the client's Content/Cities folder suffix —
-    /// city_{id}/thumbnail.png is shown in the launcher's SERVER STATUS card. 0100 is the standard map.</summary>
+    /// <summary>FALLBACK city map for the SERVER STATUS card thumbnail (Content/Cities folder suffix —
+    /// city_{id}/thumbnail.png), used only while the server's /userapi/status hasn't advertised the
+    /// active shard's map (shards[].map). 0100 is the classic Test Center / Sunrise Crater map.</summary>
     public string CityMapId { get; set; } = "0100";
     public string? InstallPath { get; set; }
     public Dictionary<string, string> ResourceCentral { get; set; } = new()

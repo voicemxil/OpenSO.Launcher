@@ -17,6 +17,10 @@ public sealed class ShardSummary
     public string? Name { get; set; }
     public string? Status { get; set; }
     public string? Version { get; set; }
+    /// <summary>The city map this shard runs, as the client's Content/Cities folder suffix (e.g. "0100"
+    /// for city_0100) — the same value the city selector hands the game. Null on servers whose status
+    /// endpoint predates the field; the launcher then falls back to LauncherConfig.CityMapId.</summary>
+    public string? Map { get; set; }
     public int PlayersOnline { get; set; }
     public int LotsOnline { get; set; }
     public int OwnedLots { get; set; }

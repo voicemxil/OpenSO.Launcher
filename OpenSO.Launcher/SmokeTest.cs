@@ -77,7 +77,7 @@ internal static class SmokeTest
           "gameVersion": "1.2.3",
           "playersOnline": 42,
           "lotsOnline": 7,
-          "shards": [ { "id": 1, "name": "Blazing Falls", "status": "Up", "playersOnline": 42, "lotsOnline": 7 } ],
+          "shards": [ { "id": 1, "name": "Blazing Falls", "status": "Up", "map": "0102", "playersOnline": 42, "lotsOnline": 7 } ],
           "topLots": [ { "shardId": 1, "name": "The Hangout", "location": 12345, "players": 9 } ]
         }
         """;
@@ -89,6 +89,7 @@ internal static class SmokeTest
                       && s.PlayersOnline == 42
                       && s.LotsOnline == 7
                       && s.Shards is { Length: 1 } && s.Shards[0].Name == "Blazing Falls"
+                      && s.Shards[0].Map == "0102" // drives the SERVER STATUS card's city thumbnail
                       && s.TopLots is { Length: 1 } && s.TopLots[0].Players == 9
                       && s.TopLots[0].Location == 12345u;
             Report("ServerStatus source-gen deserialize (case-insensitive, nested arrays)", ok,

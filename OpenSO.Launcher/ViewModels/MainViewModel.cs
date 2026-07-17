@@ -369,6 +369,11 @@ public partial class MainViewModel : ObservableObject
         _serverTimeUtc = s.ServerTime; _serverTimeSyncedAtUtc = DateTime.UtcNow; // anchor for the in-game clock
         var shard = s.Shards?.FirstOrDefault();
         ServerName = shard?.Name ?? "OpenSO";
+        // The shard advertises which city map it runs (same value the city selector hands the game).
+        // Only ever overwrite the remembered map with real data — a server that doesn't send one yet
+        // must not wipe a previously-seen value and bounce the thumbnail back to the config fallback.
+        if (!string.IsNullOrWhiteSpace(shard?.Map)) _serverCityMapId = shard!.Map!.Trim();
+        LoadCityThumbnail(); // no-op when the resolved thumbnail file is unchanged
         // ShardStatus enum: Up / Down / Busy / Full / Closed / Frontier. Up/Busy/Full = reachable.
         var st = shard?.Status ?? "Down";
         ServerOnline = st is "Up" or "Busy" or "Full";
@@ -447,15 +452,22 @@ public partial class MainViewModel : ObservableObject
     private string? _lastNotifiedGameVersion;
 
 
+    /// <summary>The city map the server's active shard advertises via /userapi/status (e.g. "0100").
+    /// Null until a status payload carries one; LauncherConfig.CityMapId is the fallback so older
+    /// servers still show a (best-guess) thumbnail.</summary>
+    private string? _serverCityMapId;
+
     /// <summary>(Re)loads the city map thumbnail from the installed client — the literal thumbnail.png
-    /// the map ships (Content/Cities/city_{CityMapId}/thumbnail.png). No-op when the same file is
-    /// already showing; clears the banner when the client is gone. Corrupt/unreadable image => no banner.</summary>
+    /// the map ships (Content/Cities/city_{map}/thumbnail.png, where {map} is the shard's advertised
+    /// map, falling back to LauncherConfig.CityMapId). No-op when the same file is already showing;
+    /// clears the banner when the client is gone. Corrupt/unreadable image => no banner.</summary>
     private void LoadCityThumbnail()
     {
         try
         {
             var path = ClientInstalled && _fsoPath != null
-                ? System.IO.Path.Combine(_fsoPath, "Content", "Cities", $"city_{_config.CityMapId}", "thumbnail.png")
+                ? System.IO.Path.Combine(_fsoPath, "Content", "Cities",
+                    $"city_{_serverCityMapId ?? _config.CityMapId}", "thumbnail.png")
                 : null;
             if (path != null && !System.IO.File.Exists(path)) path = null;
             if (path == _cityThumbLoadedFrom) return;
