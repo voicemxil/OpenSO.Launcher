@@ -239,23 +239,29 @@
             </Grid>
 
             <Border Classes="card">
-              <Grid ColumnDefinitions="Auto,*,Auto" >
+              <Grid ColumnDefinitions="Auto,*,Auto,Auto" >
                 <TextBlock Grid.Column="0" Classes="emoji" Text="🧩" Margin="0,0,14,0"/>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                   <TextBlock Text="OpenSO Client" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <TextBlock Text="{Binding ClientState}" Classes="sub" TextWrapping="Wrap"/>
                 </StackPanel>
-                <TextBlock Grid.Column="2" Text="{Binding ClientInstalled}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+                <Button Grid.Column="2" Content="Reinstall" Command="{Binding ReinstallClientCommand}"
+                        IsVisible="{Binding ClientInstalled}" IsEnabled="{Binding !Busy}"
+                        Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}" FontWeight="SemiBold" Padding="14,7" CornerRadius="6" Margin="0,0,12,0"/>
+                <TextBlock Grid.Column="3" Text="{Binding ClientStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
               </Grid>
             </Border>
             <Border Classes="card">
-              <Grid ColumnDefinitions="Auto,*,Auto">
+              <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                 <TextBlock Grid.Column="0" Classes="emoji" Text="🎮" Margin="0,0,14,0"/>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                   <TextBlock Text="The Sims Online" Foreground="{DynamicResource Ink}" FontWeight="SemiBold"/>
                   <TextBlock Text="{Binding AssetsState}" Classes="sub" TextWrapping="Wrap"/>
                 </StackPanel>
-                <TextBlock Grid.Column="2" Text="{Binding AssetsInstalled}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
+                <Button Grid.Column="2" Content="{Binding TsoReinstallButtonText}" Command="{Binding ReinstallTsoCommand}"
+                        IsEnabled="{Binding !Busy}"
+                        Background="{DynamicResource CardAlt}" Foreground="{DynamicResource Accent}" FontWeight="SemiBold" Padding="14,7" CornerRadius="6" Margin="0,0,12,0"/>
+                <TextBlock Grid.Column="3" Text="{Binding AssetsStatusText}" VerticalAlignment="Center" Foreground="{DynamicResource Accent}" FontWeight="Bold"/>
               </Grid>
             </Border>
             <Border Classes="card">

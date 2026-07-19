@@ -114,6 +114,23 @@ internal static class Program
         // (on immutable Linux distros "/" is a read-only overlay reporting 0 bytes free — Bazzite bug).
         Test("DiskSpace.EnsureFreeSpace probes the target's filesystem and tolerates not-yet-created paths", TestDiskSpaceEnsureFreeSpace);
 
+        // PHASE 7 — TSO detection / validation / reinstall (existing-install detection, completeness,
+        // registry reset, legacy-copy reuse).
+        Test("TsoAssetValidator: a complete TSOClient tree validates as Complete", TestTsoValidateComplete);
+        Test("TsoAssetValidator: parent 'The Sims Online' form (with TSOClient subdir) validates as Complete", TestTsoValidateParentForm);
+        Test("TsoAssetValidator: a tree missing a content dir is Incomplete (names what's missing)", TestTsoValidateIncomplete);
+        Test("TsoAssetValidator: content present but no tuning.dat is Incomplete", TestTsoValidateMissingTuning);
+        Test("TsoAssetValidator: an empty / nonexistent dir is Absent", TestTsoValidateEmptyAndMissing);
+        Test("TsoInstallDetector: candidates order managed → registry → legacy, each validated", TestTsoCandidateOrdering);
+        Test("TsoInstallDetector: registry beats a legacy path; duplicate paths collapse to top provenance", TestTsoCandidatePrecedenceAndDedup);
+        Test("TsoInstallDetector.SelectBest prefers a complete candidate, else incomplete, else null", TestTsoSelectBest);
+        Test("TsoInstallDetector.SelectCopySource returns a complete NON-managed source (else null)", TestTsoSelectCopySource);
+        Test("RegistryWriter.PlanTsoInstall resets Maxis InstallDir in BOTH views (WOW6432Node + native)", TestRegistryTsoResetPlan);
+        Test("RegistryWriter.PlanFsoInstall targets the FreeSO subkey in both views", TestRegistryFsoPlan);
+        await Test("TsoInstaller.CopyFromExistingAsync copies a legacy install in + registers (reset) the managed path", TestTsoCopyFromExisting);
+        await Test("TsoInstaller.CopyFromExistingAsync refuses an incomplete source (no broken pointer)", TestTsoCopyRejectsIncomplete);
+        Test("Client reinstall preserves user data via swap + carry-over (saves/config survive, code refreshed)", TestClientReinstallPreservesUserData);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -1626,6 +1643,238 @@ internal static class Program
                 File.SetUnixFileMode(Path.GetDirectoryName(filePath)!, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
         catch { /* best effort */ }
+    }
+
+    // ---- PHASE 7: TSO detection / validation / reinstall ----
+
+    /// <summary>Builds a fixture TSO tree. <paramref name="parentForm"/> puts the game files under a
+    /// TSOClient/ subdir (the "The Sims Online" parent / registry-InstallDir form); otherwise root IS the
+    /// TSOClient dir (the legacy Program Files\...\TSOClient form). <paramref name="includeTuning"/> and
+    /// <paramref name="dirs"/> control completeness. Returns the candidate path to validate.</summary>
+    private static string MakeTsoFixture(string label, bool parentForm, bool includeTuning, string[] dirs)
+    {
+        var root = Path.Combine(NewTmp(), label);
+        var tsoClient = parentForm ? Path.Combine(root, "TSOClient") : root;
+        Directory.CreateDirectory(tsoClient);
+        if (includeTuning) File.WriteAllText(Path.Combine(tsoClient, "tuning.dat"), "tuning");
+        foreach (var d in dirs)
+        {
+            var dir = Path.Combine(tsoClient, d);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "sample.dat"), "x"); // non-empty — the validator ignores empty dirs
+        }
+        return root;
+    }
+
+    private static readonly string[] AllTsoDirs = { "uigraphics", "objectdata", "packingslips", "sounddata" };
+
+    private static void TestTsoValidateComplete()
+    {
+        // Legacy TSOClient-form path: tuning.dat + all content dirs directly in the candidate.
+        var path = MakeTsoFixture("complete-tsoclient", parentForm: false, includeTuning: true, AllTsoDirs);
+        var v = TsoAssetValidator.Validate(path);
+        Assert(v.State == TsoInstallState.Complete, "a full TSOClient tree is Complete");
+        Assert(v.MissingItems.Count == 0, "nothing is reported missing for a complete install");
+        Assert(v.TsoClientDir != null, "the resolved TSOClient dir is reported");
+    }
+
+    private static void TestTsoValidateParentForm()
+    {
+        // The registry InstallDir / launcher-managed form: candidate is the parent, files live in TSOClient/.
+        var path = MakeTsoFixture("complete-parent", parentForm: true, includeTuning: true, AllTsoDirs);
+        var v = TsoAssetValidator.Validate(path);
+        Assert(v.State == TsoInstallState.Complete, "the 'The Sims Online' parent form (TSOClient subdir) is Complete");
+        Assert(v.TsoClientDir!.EndsWith("TSOClient") || v.TsoClientDir.EndsWith("TSOClient" + Path.DirectorySeparatorChar),
+            "validation resolves down into the TSOClient subdir");
+    }
+
+    private static void TestTsoValidateIncomplete()
+    {
+        // Everything but sounddata → a truncated extract.
+        var path = MakeTsoFixture("incomplete", parentForm: false, includeTuning: true,
+            new[] { "uigraphics", "objectdata", "packingslips" });
+        var v = TsoAssetValidator.Validate(path);
+        Assert(v.State == TsoInstallState.Incomplete, "a tree missing a content dir is Incomplete");
+        Assert(v.MissingItems.Contains("sounddata"), "the missing content dir is named");
+    }
+
+    private static void TestTsoValidateMissingTuning()
+    {
+        // Content dirs present but the authoritative tuning.dat absent — the game's locators would reject it.
+        var path = MakeTsoFixture("no-tuning", parentForm: false, includeTuning: false, AllTsoDirs);
+        var v = TsoAssetValidator.Validate(path);
+        Assert(v.State == TsoInstallState.Incomplete, "missing tuning.dat is Incomplete even with content present");
+        Assert(v.MissingItems.Contains(TsoAssetValidator.TuningFile), "tuning.dat is named as missing");
+    }
+
+    private static void TestTsoValidateEmptyAndMissing()
+    {
+        var empty = Path.Combine(NewTmp(), "empty");
+        Directory.CreateDirectory(empty);
+        Assert(TsoAssetValidator.Validate(empty).State == TsoInstallState.Absent, "an empty directory is Absent");
+
+        var missing = Path.Combine(NewTmp(), "does-not-exist");
+        Assert(TsoAssetValidator.Validate(missing).State == TsoInstallState.Absent, "a nonexistent path is Absent");
+        Assert(TsoAssetValidator.Validate(null).State == TsoInstallState.Absent, "a null path is Absent (never throws)");
+    }
+
+    private static void TestTsoCandidateOrdering()
+    {
+        var managed = MakeTsoFixture("m", parentForm: true, includeTuning: true, AllTsoDirs);
+        var registry = MakeTsoFixture("r", parentForm: true, includeTuning: true, AllTsoDirs);
+        var legacy = MakeTsoFixture("l", parentForm: false, includeTuning: true, AllTsoDirs);
+
+        var cands = TsoInstallDetector.BuildCandidates(managed, new[] { registry }, new[] { legacy });
+        Assert(cands.Count == 3, "three distinct candidates");
+        Assert(cands[0].Provenance == TsoProvenance.Managed, "managed is first");
+        Assert(cands[1].Provenance == TsoProvenance.Registry, "registry is second");
+        Assert(cands[2].Provenance == TsoProvenance.LegacyPath, "legacy path is last");
+        Assert(cands.All(c => c.Validation.State == TsoInstallState.Complete), "every candidate is validated");
+    }
+
+    private static void TestTsoCandidatePrecedenceAndDedup()
+    {
+        // No managed install; a registry path AND a legacy path both point at complete installs. Registry
+        // must precede the legacy path (older installs live where the registry points).
+        var registry = MakeTsoFixture("reg", parentForm: true, includeTuning: true, AllTsoDirs);
+        var legacy = MakeTsoFixture("leg", parentForm: false, includeTuning: true, AllTsoDirs);
+        var cands = TsoInstallDetector.BuildCandidates(null, new[] { registry }, new[] { legacy });
+        Assert(cands.Count == 2 && cands[0].Provenance == TsoProvenance.Registry && cands[1].Provenance == TsoProvenance.LegacyPath,
+            "registry beats the hardcoded legacy path");
+
+        // The SAME path arriving as both managed and registry collapses to one candidate — managed wins.
+        var shared = MakeTsoFixture("shared", parentForm: true, includeTuning: true, AllTsoDirs);
+        var deduped = TsoInstallDetector.BuildCandidates(shared, new[] { shared }, Array.Empty<string>());
+        Assert(deduped.Count == 1 && deduped[0].Provenance == TsoProvenance.Managed,
+            "a duplicate path collapses to the highest-precedence provenance (managed)");
+    }
+
+    private static void TestTsoSelectBest()
+    {
+        var complete = MakeTsoFixture("c", parentForm: true, includeTuning: true, AllTsoDirs);
+        var incomplete = MakeTsoFixture("i", parentForm: true, includeTuning: true, new[] { "uigraphics" });
+
+        // Managed incomplete + registry complete → the complete one wins even though it's lower precedence.
+        var mixed = TsoInstallDetector.BuildCandidates(incomplete, new[] { complete }, Array.Empty<string>());
+        Assert(TsoInstallDetector.SelectBest(mixed)!.Validation.State == TsoInstallState.Complete,
+            "SelectBest prefers a complete candidate over an incomplete higher-precedence one");
+
+        // All incomplete → the highest-precedence incomplete is surfaced (so the UI can offer repair).
+        var allIncomplete = TsoInstallDetector.BuildCandidates(incomplete, Array.Empty<string>(), Array.Empty<string>());
+        Assert(TsoInstallDetector.SelectBest(allIncomplete)!.Validation.State == TsoInstallState.Incomplete,
+            "with nothing complete, SelectBest returns the incomplete candidate");
+
+        // Nothing usable → null.
+        var empty = Path.Combine(NewTmp(), "empty"); Directory.CreateDirectory(empty);
+        var absent = TsoInstallDetector.BuildCandidates(empty, Array.Empty<string>(), Array.Empty<string>());
+        Assert(TsoInstallDetector.SelectBest(absent) == null, "all-absent yields no best candidate");
+    }
+
+    private static void TestTsoSelectCopySource()
+    {
+        var managed = MakeTsoFixture("managed", parentForm: true, includeTuning: true, AllTsoDirs);
+        var legacy = MakeTsoFixture("legacy", parentForm: false, includeTuning: true, AllTsoDirs);
+
+        // A complete legacy install alongside the managed dir → it's the copy source (avoids re-download).
+        var cands = TsoInstallDetector.BuildCandidates(managed, Array.Empty<string>(), new[] { legacy });
+        var src = TsoInstallDetector.SelectCopySource(cands, managed);
+        Assert(src != null && src.Provenance == TsoProvenance.LegacyPath, "a complete non-managed install is the copy source");
+
+        // Only the managed install is complete → nothing external to reuse → null (reinstall downloads fresh).
+        var onlyManaged = TsoInstallDetector.BuildCandidates(managed, Array.Empty<string>(), Array.Empty<string>());
+        Assert(TsoInstallDetector.SelectCopySource(onlyManaged, managed) == null,
+            "a complete MANAGED install is not offered as a copy source");
+    }
+
+    private static void TestRegistryTsoResetPlan()
+    {
+        var dir = Path.Combine(NewTmp(), "The Sims Online");
+        var plan = RegistryWriter.PlanTsoInstall(dir);
+        Assert(plan.Count == 2, "the reset writes exactly two entries (one per view)");
+        Assert(plan.All(e => e.SubKey == RegistryWriter.TsoSubKey), "both target SOFTWARE\\Maxis\\The Sims Online");
+        Assert(plan.All(e => e.ValueName == "InstallDir"), "both write the InstallDir value");
+        Assert(plan.All(e => e.Value == Path.GetFullPath(dir)), "both point at the (managed) install dir");
+        Assert(plan.Any(e => e.Scope == RegistryScope.Wow6432), "the WOW6432Node view the game reads is written");
+        Assert(plan.Any(e => e.Scope == RegistryScope.Native), "the native view is also written (no shadowing)");
+        // The game reads the 32-bit view FIRST — assert it's written first so it's never left blind.
+        Assert(plan[0].Scope == RegistryScope.Wow6432, "the WOW6432Node view is written first (the game's read path)");
+    }
+
+    private static void TestRegistryFsoPlan()
+    {
+        var dir = Path.Combine(NewTmp(), "FSO");
+        var plan = RegistryWriter.PlanFsoInstall(dir);
+        Assert(plan.Count == 2 && plan.All(e => e.SubKey == RegistryWriter.FsoSubKey && e.ValueName == "InstallDir"),
+            "the client entry targets SOFTWARE\\Rhys Simpson\\FreeSO InstallDir in both views");
+        Assert(plan.All(e => e.Value == Path.GetFullPath(dir)), "the client entry points at the install dir");
+    }
+
+    private static async Task TestTsoCopyFromExisting()
+    {
+        // A complete legacy TSOClient dir is copied into the managed "The Sims Online" parent, then the
+        // Maxis pointer is (re)registered — captured here via the registerInstall callback (registry writes
+        // are a no-op off Windows, but the callback still records the reset target).
+        var source = MakeTsoFixture("legacy-src", parentForm: false, includeTuning: true, AllTsoDirs);
+        var managedRoot = Path.Combine(NewTmp(), "OpenSO");
+        var managedTso = Path.Combine(managedRoot, "The Sims Online");
+
+        (string code, string dir)? registered = null;
+        var tso = new TsoInstaller(new LauncherConfig(), (code, dir) => registered = (code, dir));
+        await tso.CopyFromExistingAsync(source, managedTso, new Progress<ProgressReport>());
+
+        var v = TsoAssetValidator.Validate(managedTso);
+        Assert(v.State == TsoInstallState.Complete, "the copied managed install validates as Complete");
+        Assert(File.Exists(Path.Combine(managedTso, "TSOClient", "tuning.dat")), "tuning.dat landed at <managed>/TSOClient/");
+        Assert(registered is { code: "TSO" }, "the copy registers the Maxis/TSO install (registry reset)");
+        Assert(Path.GetFullPath(registered!.Value.dir) == Path.GetFullPath(managedTso),
+            "the registry reset points at the managed install dir, not the old legacy path");
+    }
+
+    private static async Task TestTsoCopyRejectsIncomplete()
+    {
+        var source = MakeTsoFixture("bad-src", parentForm: false, includeTuning: false, new[] { "uigraphics" });
+        var managedTso = Path.Combine(NewTmp(), "OpenSO", "The Sims Online");
+        bool registered = false;
+        var tso = new TsoInstaller(new LauncherConfig(), (_, _) => registered = true);
+        bool threw = false;
+        try { await tso.CopyFromExistingAsync(source, managedTso, new Progress<ProgressReport>()); }
+        catch (IOException) { threw = true; }
+        Assert(threw, "copying an incomplete source fails rather than registering a broken install");
+        Assert(!registered, "no registry pointer is written for an incomplete copy");
+    }
+
+    private static void TestClientReinstallPreservesUserData()
+    {
+        // A client REINSTALL is the same atomic swap + carry-over as an update: the freshly-extracted client
+        // is swapped in, then the user's saves/config are restored from the backup (the old install). This
+        // exercises exactly the reused FsoInstaller seams (SwapIntoPlace + CarryOverUserData).
+        var tmp = NewTmp();
+        var install = Path.Combine(tmp, "FSO");
+        var staging = Path.Combine(tmp, ".FSO.staging");
+        var backup = Path.Combine(tmp, ".FSO.backup");
+
+        // Existing install with user data + old code.
+        Directory.CreateDirectory(Path.Combine(install, "Content"));
+        File.WriteAllText(Path.Combine(install, "Content", "config.ini"), "user config");
+        File.WriteAllText(Path.Combine(install, "Content", "LocalHouse.fsov"), "my save");
+        File.WriteAllText(Path.Combine(install, "OpenSO.dll"), "old code");
+        File.WriteAllText(Path.Combine(install, "version.txt"), "v0.1.0");
+
+        // Freshly-extracted (reinstalled) client in staging.
+        Directory.CreateDirectory(Path.Combine(staging, "Content"));
+        File.WriteAllText(Path.Combine(staging, "Content", "config.ini"), "default config");
+        File.WriteAllText(Path.Combine(staging, "OpenSO.dll"), "new code");
+        File.WriteAllText(Path.Combine(staging, "version.txt"), "v0.1.0");
+
+        FsoInstaller.SwapIntoPlace(staging, install, backup);
+        FsoInstaller.CarryOverUserData(backup, install);
+
+        Assert(File.ReadAllText(Path.Combine(install, "Content", "config.ini")) == "user config",
+            "the user's config survives a reinstall (IgnoreFiles)");
+        Assert(File.Exists(Path.Combine(install, "Content", "LocalHouse.fsov")),
+            "the user's saves survive a reinstall");
+        Assert(File.ReadAllText(Path.Combine(install, "OpenSO.dll")) == "new code",
+            "the reinstalled code replaces the old code");
     }
 
     // ---- harness ----

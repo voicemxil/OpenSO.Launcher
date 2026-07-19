@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -24,7 +25,13 @@ public partial class MainViewModel : ObservableObject
     private readonly LauncherConfig _config;
     private readonly InstallStateService _installState;
     private readonly InstallOrchestrator _orchestrator;
+    private readonly TsoInstallDetector _tsoDetector;
     private readonly GameLauncher _launcher;
+
+    /// <summary>The most recent TSO detection (managed / registry / legacy candidates, each validated).
+    /// Drives the assets state labels and the reinstall/repair copy-source decision. Refreshed by
+    /// <see cref="RefreshAsync"/>.</summary>
+    private IReadOnlyList<TsoCandidate> _tsoCandidates = Array.Empty<TsoCandidate>();
     private readonly NewsService _news;
     private readonly SelfUpdateService _selfUpdate;
     private readonly StatusService _status;
@@ -118,9 +125,23 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(PlayButtonText))]
     private bool _clientInstalled;
-    [ObservableProperty] private bool _assetsInstalled;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AssetsStatusText))]
+    private bool _assetsInstalled;
+    /// <summary>True when TSO game files were detected but are INCOMPLETE (a partial/truncated install) —
+    /// surfaced as a visible state that offers "Reinstall / Repair".</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AssetsStatusText))]
+    [NotifyPropertyChangedFor(nameof(TsoReinstallButtonText))]
+    private bool _assetsIncomplete;
     [ObservableProperty] private bool _remeshInstalled;
     [ObservableProperty] private string _remeshState = "Checking…";
+
+    /// <summary>Short status word shown on the Installer cards (kinder than a raw True/False).</summary>
+    public string ClientStatusText => ClientInstalled ? "Installed" : "Missing";
+    public string AssetsStatusText => AssetsInstalled ? "Installed" : AssetsIncomplete ? "Incomplete" : "Missing";
+    /// <summary>The TSO card's action reads "Repair" when something is there but incomplete, else "Reinstall".</summary>
+    public string TsoReinstallButtonText => AssetsIncomplete ? "Repair" : "Reinstall";
 
     // Game (client) version: the installed client's version.txt vs the version the server requires.
     // A mismatch means the client must update before it can connect (login version protocol).
@@ -212,6 +233,7 @@ public partial class MainViewModel : ObservableObject
         _config = services.Config;
         _installState = services.InstallState;
         _orchestrator = services.Orchestrator;
+        _tsoDetector = services.TsoDetector;
         _news = services.News;
         _selfUpdate = services.SelfUpdate;
         _status = services.Status;
@@ -256,7 +278,11 @@ public partial class MainViewModel : ObservableObject
         StartStatusPolling();
     }
 
-    partial void OnClientInstalledChanged(bool value) => OnPropertyChanged(nameof(PlayButtonText));
+    partial void OnClientInstalledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PlayButtonText));
+        OnPropertyChanged(nameof(ClientStatusText));
+    }
     partial void OnUpdateVersionChanged(string? value) => OnPropertyChanged(nameof(HasUpdate));
 
     partial void OnGraphicsModeChanged(string value) { _settings.GraphicsMode = value; _settings.Save(); }
@@ -399,20 +425,32 @@ public partial class MainViewModel : ObservableObject
         {
             StatusLine = "Checking your installation…";
             System.Collections.Generic.IReadOnlyList<InstallStatus> installed;
+            IReadOnlyList<TsoCandidate> tsoCandidates;
             await _installGate.WaitAsync();
-            try { installed = await _installState.GetInstalledAsync(); }
+            try
+            {
+                installed = await _installState.GetInstalledAsync();
+                // TSO: the full detection (managed / registry / legacy candidates, each validated) so the
+                // UI can distinguish complete / incomplete / absent and pick a copy source for repair.
+                // Probed under the same gate — it reads the same install tree an install mutates.
+                tsoCandidates = _tsoDetector.Detect();
+            }
             finally { _installGate.Release(); }
             var fso = installed.FirstOrDefault(s => s.Code == "FSO");
-            var tso = installed.FirstOrDefault(s => s.Code == "TSO");
             var rms = installed.FirstOrDefault(s => s.Code == "RMS");
 
+            _tsoCandidates = tsoCandidates;
+            var tsoBest = TsoInstallDetector.SelectBest(tsoCandidates);
+            var tsoState = tsoBest?.Validation.State ?? TsoInstallState.Absent;
+
             ClientInstalled = fso?.IsInstalled == true;
-            AssetsInstalled = tso?.IsInstalled == true;
+            AssetsInstalled = tsoState == TsoInstallState.Complete;
+            AssetsIncomplete = tsoState == TsoInstallState.Incomplete;
             RemeshInstalled = rms?.IsInstalled == true;
             _fsoPath = ClientInstalled ? fso!.Path : null;
             InstalledGameVersion = ClientInstalled ? ReadGameVersion(_fsoPath) : null;
             ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
-            AssetsState = AssetsInstalled ? $"Installed → {tso!.Path}" : "Not installed (downloaded on install)";
+            AssetsState = DescribeTso(tsoBest, tsoState);
             RemeshState = RemeshInstalled ? "Installed" : "Not installed (optional — improves 3D mode)";
             StatusLine = ClientInstalled ? "Ready to play." : "Ready to install.";
             LoadCityThumbnail(); // install state just changed — the map thumbnail may have (dis)appeared
@@ -425,6 +463,94 @@ public partial class MainViewModel : ObservableObject
             ClientState = "Unknown — couldn't check the install";
             StatusLine = "Couldn't check your installation: " + ex.Message;
         }
+    }
+
+    /// <summary>Human-readable state line for the TSO card, including provenance and — when incomplete —
+    /// what's missing, so a partial install reads as a clear "repair me" rather than a silent failure.</summary>
+    private static string DescribeTso(TsoCandidate? best, TsoInstallState state)
+    {
+        static string Where(TsoProvenance p) => p switch
+        {
+            TsoProvenance.Managed => "launcher-managed",
+            TsoProvenance.Registry => "registry",
+            _ => "legacy install"
+        };
+        return state switch
+        {
+            TsoInstallState.Complete => $"Installed ({Where(best!.Provenance)}) → {best.Path}",
+            TsoInstallState.Incomplete =>
+                $"Incomplete ({Where(best!.Provenance)}) — missing {string.Join(", ", best.Validation.MissingItems)}. Use Repair.",
+            _ => "Not installed (downloaded on install)"
+        };
+    }
+
+    /// <summary>Reinstall/repair the OpenSO client. Reuses the installer's atomic swap + user-data
+    /// carry-over (CarryOverUserData), so saves, Content/config.ini and the remesh pack survive. Falls back
+    /// to a fresh install when nothing is installed to repair. Same operation discipline as InstallAsync:
+    /// blocked while the game runs, serialized behind the install gate, cancellable at shutdown, failures
+    /// on the loud error surface.</summary>
+    [RelayCommand]
+    private async Task ReinstallClientAsync()
+    {
+        if (Busy || BlockedByRunningGame()) return;
+        if (!ClientInstalled) { await InstallAsync(); return; }
+        ClearError();
+        Busy = true; Progress = 0; Section = "DOWNLOADS";
+        Notify("Reinstalling the OpenSO client (your saves and settings are preserved)…");
+        bool ok = false;
+        try
+        {
+            var reporter = MakeReporter();
+            await _installGate.WaitAsync(_shutdownCts.Token);
+            try
+            {
+                _activeInstall = _orchestrator.ReinstallComponentAsync("FSO", _config.ResolvedInstallRoot(), reporter,
+                    onUnsupported: code => Notify($"{code} installer not available."), _shutdownCts.Token);
+                await _activeInstall;
+            }
+            finally { _installGate.Release(); }
+            Notify("OpenSO client reinstalled. Press PLAY to launch.");
+            ok = true;
+        }
+        catch (OperationCanceledException) { /* launcher closing */ }
+        catch (Exception ex) { HandleOperationFailure("Client reinstall", ex); }
+        finally { EndOperation(ok); await RefreshAsync(); TrimMemory(); }
+    }
+
+    /// <summary>Reinstall/repair the TSO game files into the launcher-managed location. If a COMPLETE copy is
+    /// detected elsewhere (e.g. a legacy retail install), it's copied in — no 1.27 GB re-download; otherwise
+    /// the assets are downloaded fresh from the Internet Archive. Either way the Maxis registry pointer is
+    /// reset to the managed path so a stale/incomplete pointer can't win. Blocked while the game runs (it
+    /// reads these assets), serialized behind the install gate, cancellable at shutdown.</summary>
+    [RelayCommand]
+    private async Task ReinstallTsoAsync()
+    {
+        if (Busy || BlockedByRunningGame()) return;
+        ClearError();
+        Busy = true; Progress = 0; Section = "DOWNLOADS";
+        var managedTsoDir = System.IO.Path.Combine(_config.ResolvedInstallRoot(), Components.InstallDirName("TSO"));
+        var source = TsoInstallDetector.SelectCopySource(_tsoCandidates, managedTsoDir);
+        Notify(source != null
+            ? "Repairing The Sims Online from your existing copy…"
+            : "Reinstalling The Sims Online (~1.27 GB, from the Internet Archive)…");
+        bool ok = false;
+        try
+        {
+            var reporter = MakeReporter();
+            await _installGate.WaitAsync(_shutdownCts.Token);
+            try
+            {
+                _activeInstall = _orchestrator.ReinstallTsoAsync(_config.ResolvedInstallRoot(), source, reporter,
+                    _shutdownCts.Token);
+                await _activeInstall;
+            }
+            finally { _installGate.Release(); }
+            Notify("The Sims Online reinstalled.");
+            ok = true;
+        }
+        catch (OperationCanceledException) { /* launcher closing */ }
+        catch (Exception ex) { HandleOperationFailure("The Sims Online reinstall", ex); }
+        finally { EndOperation(ok); await RefreshAsync(); TrimMemory(); }
     }
 
     /// <summary>True when the installed client's version differs from the version the server requires

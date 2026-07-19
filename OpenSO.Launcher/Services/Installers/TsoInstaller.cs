@@ -98,6 +98,66 @@ public sealed class TsoInstaller : IComponentInstaller
         }
     }
 
+    /// <summary>
+    /// Repair/reinstall path that REUSES an already-present COMPLETE TSO install instead of re-downloading
+    /// the 1.27 GB archive: copies a validated <paramref name="sourceTsoClientDir"/> (a <c>…/TSOClient</c>
+    /// folder — e.g. a legacy retail install detected under Program Files) into the launcher-managed
+    /// location so the result matches a fresh install (<c>&lt;installPath&gt;/TSOClient/tuning.dat</c>), then
+    /// verifies the copy is complete and registers the Maxis entry (which RESETS the registry pointer to the
+    /// managed path — see RegistryWriter). No-op fast path when the source already IS the managed dir.
+    /// </summary>
+    public async Task CopyFromExistingAsync(string sourceTsoClientDir, string installPath,
+        IProgress<ProgressReport> progress, CancellationToken ct = default)
+    {
+        var src = Path.GetFullPath(sourceTsoClientDir);
+        var destTsoClient = Path.GetFullPath(Path.Combine(installPath, "TSOClient"));
+        var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+        if (!string.Equals(src, destTsoClient, cmp))
+        {
+            if (!Directory.Exists(src))
+                throw new DirectoryNotFoundException($"Source TSO install not found: {src}");
+            // Refuse to copy a directory into itself/one of its own descendants (would recurse forever).
+            var srcWithSep = src.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if ((destTsoClient + Path.DirectorySeparatorChar).StartsWith(srcWithSep, cmp))
+                throw new IOException("Cannot copy the TSO install into itself.");
+
+            // The copy only needs the extracted game (~2 GB) — no download/cab peak — but reuse the
+            // shared pre-flight with the same margin so we never start a copy that can't finish.
+            DiskSpace.EnsureFreeSpace(installPath, MinFreeBytes, "repair The Sims Online");
+            progress.Report(new ProgressReport("tso", 0, "Copying The Sims Online from your existing install…"));
+            Directory.CreateDirectory(installPath);
+            await Task.Run(() => CopyTree(src, destTsoClient,
+                ProgressScaler.Scale(progress, "tso", 0.00, 0.95, "Copying game files… "), ct), ct);
+
+            // The copy must land as a COMPLETE install, or we don't register a broken pointer.
+            var v = TsoAssetValidator.Validate(installPath);
+            if (v.State != TsoInstallState.Complete)
+                throw new IOException("Copied The Sims Online install is incomplete (missing: " +
+                    string.Join(", ", v.MissingItems) + ").");
+        }
+
+        progress.Report(new ProgressReport("tso", 0.98, "Registering install…"));
+        _registerInstall?.Invoke(Code, installPath);
+        progress.Report(new ProgressReport("tso", 1.0, "The Sims Online installed."));
+    }
+
+    private static void CopyTree(string src, string dest, IProgress<ProgressReport> progress, CancellationToken ct)
+    {
+        var files = Directory.GetFiles(src, "*", SearchOption.AllDirectories);
+        Directory.CreateDirectory(dest);
+        for (int i = 0; i < files.Length; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var rel = Path.GetRelativePath(src, files[i]);
+            var target = Path.Combine(dest, rel);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(files[i], target, overwrite: true);
+            if (files.Length > 0 && (i % 64 == 0 || i == files.Length - 1))
+                progress.Report(new ProgressReport("tso", (double)(i + 1) / files.Length, $"{i + 1}/{files.Length} files"));
+        }
+    }
+
     // The install peaks at the download (~1.3 GB) coexisting with the unpacked cabs (~1.3 GB), then the
     // extracted game (~2 GB) after both are freed. Require a safe margin so we never stall mid-extraction.
     private const long MinFreeBytes = 4L * 1024 * 1024 * 1024;

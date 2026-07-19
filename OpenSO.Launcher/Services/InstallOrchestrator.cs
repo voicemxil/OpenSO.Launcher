@@ -75,6 +75,39 @@ public sealed class InstallOrchestrator
         }
     }
 
+    /// <summary>
+    /// Reinstalls/repairs a SINGLE component (no dependency resolution) — the "reinstall OpenSO client" /
+    /// "reinstall TSO game files" actions. For FSO this reuses the installer's atomic swap + user-data
+    /// carry-over (saves, config, remesh survive). Installs to the same launcher-managed
+    /// <c>&lt;installRoot&gt;/&lt;dir&gt;</c> the fresh install uses.
+    /// </summary>
+    public async Task ReinstallComponentAsync(string code, string installRoot,
+        IProgress<ProgressReport> progress, Action<string>? onUnsupported = null, CancellationToken ct = default)
+    {
+        var installer = CreateInstaller(code);
+        if (installer == null) { onUnsupported?.Invoke(code); return; }
+        var dir = Path.Combine(installRoot, Components.InstallDirName(code));
+        progress.Report(new ProgressReport(code, 0, $"Reinstalling {Components.Names.GetValueOrDefault(code, code)}…"));
+        await installer.InstallAsync(dir, progress, ct);
+    }
+
+    /// <summary>
+    /// Reinstalls/repairs the TSO game files into the managed location. When
+    /// <paramref name="completeSource"/> is a detected COMPLETE install elsewhere (e.g. a legacy retail copy)
+    /// it is COPIED in (no 1.27 GB re-download); otherwise the assets are downloaded fresh from the Internet
+    /// Archive. Either way the Maxis registry pointer is reset to the managed path via <see cref="RegisterInstall"/>.
+    /// </summary>
+    public async Task ReinstallTsoAsync(string installRoot, TsoCandidate? completeSource,
+        IProgress<ProgressReport> progress, CancellationToken ct = default)
+    {
+        var dir = Path.Combine(installRoot, Components.InstallDirName("TSO"));
+        var tso = new TsoInstaller(_config, RegisterInstall);
+        if (completeSource is { Validation: { State: TsoInstallState.Complete, TsoClientDir: { } srcDir } })
+            await tso.CopyFromExistingAsync(srcDir, dir, progress, ct);
+        else
+            await tso.InstallAsync(dir, progress, ct);
+    }
+
     /// <summary>Factory for ported installers. Returns null for components not yet ported.</summary>
     private IComponentInstaller? CreateInstaller(string code) => code switch
     {
