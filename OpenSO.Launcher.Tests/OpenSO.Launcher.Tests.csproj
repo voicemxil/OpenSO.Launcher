@@ -35,6 +35,8 @@
     <Compile Include="..\OpenSO.Launcher\Services\StatusDisplay.cs" Link="src\StatusDisplay.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Extraction\ArchivePathGuard.cs" Link="src\ArchivePathGuard.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\TsoAssetValidator.cs" Link="src\TsoAssetValidator.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\TsoInstallDetector.cs" Link="src\TsoInstallDetector.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\LauncherHandoff.cs" Link="src\LauncherHandoff.cs" />
     <Compile Include="..\OpenSO.Launcher\LauncherArgs.cs" Link="src\LauncherArgs.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Installers\IComponentInstaller.cs" Link="src\IComponentInstaller.cs" />

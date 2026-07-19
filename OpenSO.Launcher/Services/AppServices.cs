@@ -13,6 +13,7 @@ public sealed class AppServices
     public required LauncherConfig Config { get; init; }
     public required InstallStateService InstallState { get; init; }
     public required InstallOrchestrator Orchestrator { get; init; }
+    public required TsoInstallDetector TsoDetector { get; init; }
     public required NewsService News { get; init; }
     public required SelfUpdateService SelfUpdate { get; init; }
     public required StatusService Status { get; init; }
@@ -28,6 +29,7 @@ public sealed class AppServices
             Config = config,
             InstallState = installState,
             Orchestrator = new InstallOrchestrator(config, installState),
+            TsoDetector = new TsoInstallDetector(config),
             News = new NewsService(config),
             SelfUpdate = new SelfUpdateService(config),
             Status = new StatusService(config),

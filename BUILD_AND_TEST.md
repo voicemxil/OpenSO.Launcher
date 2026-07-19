@@ -344,6 +344,67 @@ the normal progress UI), and **auto-launches the game on success**. When the ins
 skips straight to launch — **no unnecessary reinstall**. On failure it surfaces the normal error in the UI,
 **stays open**, and does **not** retry or loop.
 
+## TSO detection, completeness validation & reinstall/repair
+
+The launcher detects existing **The Sims Online** game assets the same way the game client resolves them at
+runtime (OpenSO `tso.client/Utils/GameLocator/*Locator.cs`), then validates completeness before trusting a
+directory, and exposes reinstall/repair actions for both artifacts.
+
+**Detection candidate order (`Services/TsoInstallDetector.cs`).** Highest precedence first — mirroring the
+game's own locator order (relative-sibling → registry → hardcoded fallback):
+
+1. **Managed** — the launcher-managed `<installRoot>/The Sims Online` (a sibling of the OpenSO client, which
+   the game's relative `../The Sims Online/TSOClient/` check finds first).
+2. **Registry** *(Windows)* — `HKLM\SOFTWARE\Maxis\The Sims Online\InstallDir`, read under **both** the
+   32-bit/WOW6432Node view (`RegistryView.Registry32` — the view `WindowsLocator` actually opens) and the
+   native view, so a value written by either the launcher or the legacy retail installer is seen.
+3. **Legacy path** *(Windows)* — the well-known retail dirs `C:\Program Files\Maxis\The Sims Online\TSOClient`
+   and `C:\Program Files (x86)\...\TSOClient` (the game's own hardcoded fallback).
+
+Registry beats the hardcoded paths (an old install lives where the registry points). Duplicate paths collapse
+to the highest-precedence provenance. Off Windows there is no registry/retail installer, so detection is the
+managed location alone (plus `LauncherConfig.InstallPath` when the install root is overridden — the only
+user-configured path mechanism that exists). Each candidate is validated; `SelectBest` returns the
+highest-precedence **complete** candidate, else the highest-precedence **incomplete** one (so the UI can
+offer a repair), else nothing.
+
+**Completeness validation (`Services/TsoAssetValidator.cs`).** A cheap structural check derived from what the
+game actually loads, not invented: `tuning.dat` (the authoritative file every locator tests, and the first
+thing `Content.Init` loads) plus the content directories the client scans under the TSOClient base path —
+`uigraphics/`, `objectdata/`, `packingslips/`, `sounddata/`. States: **Complete** (all present),
+**Incomplete** (some but not all — a truncated extract), **Absent** (empty/unrelated dir). A candidate may
+point at the `The Sims Online` **parent** (registry `InstallDir` / managed folder — game appends `\TSOClient\`)
+or directly at the `TSOClient` dir (legacy path form); both are resolved.
+
+**Reinstall/repair actions (Installer tab).** Each artifact card has an action:
+
+- **Reinstall OpenSO client** (`ReinstallClientCommand`) — reuses `FsoInstaller`'s atomic staging → verify →
+  swap with **`CarryOverUserData`**, so saves, `Content/config.ini`, `NLog.config` and the remesh pack survive.
+- **Reinstall / Repair TSO** (`ReinstallTsoCommand`) — the button reads **Repair** when detection is Incomplete.
+  If a **complete** install is detected elsewhere (`SelectCopySource` — e.g. a legacy retail copy), it is
+  **copied** into the managed location (`TsoInstaller.CopyFromExistingAsync`, validated complete before it's
+  trusted) — no 1.27 GB re-download; otherwise the assets are downloaded fresh from the Internet Archive.
+  An **Incomplete** state is surfaced visibly (the card shows what's missing) and offers the repair.
+
+**Legacy-install handling — copy, not in-place.** A detected complete legacy install is offered as a *source*
+(copied into the managed location), not pointed at in place. This fits the existing managed-sibling
+architecture: the game finds TSO by the relative sibling path first (which only works when TSO is a sibling of
+the client), off-Windows has no registry to point elsewhere at all, and the registry reset below is meant to
+make the *managed* path canonical — an external in-place install would contradict all three.
+
+**Registry reset on (re)install (`Services/RegistryWriter.cs`).** When TSO is installed/repaired into the
+managed location, `WriteTsoInstall` (over)writes `SOFTWARE\Maxis\The Sims Online\InstallDir` in **both** views
+to the new managed path, so a stale pointer from an old/incomplete install (e.g. the Program Files one) can no
+longer win the game's registry lookup. The exact value set is a pure, testable **plan** (`PlanTsoInstall` /
+`PlanFsoInstall`) so tests assert it without a real registry. Off Windows this is a no-op (the marker +
+sibling layout cover detection), keeping `RegistryWriter`'s existing `OperatingSystem`-branching pattern.
+
+All of this decision logic lives in testable seams (`TsoAssetValidator.Validate`,
+`TsoInstallDetector.BuildCandidates`/`SelectBest`/`SelectCopySource`, `RegistryWriter.Plan*`,
+`TsoInstaller.CopyFromExistingAsync`) covered by the headless suite with fixture TSO trees
+(complete/incomplete/empty), candidate precedence (incl. registry-vs-legacy), the registry value set, and
+user-data preservation on reinstall.
+
 ## Server status polling & manual refresh
 
 `MainViewModel` runs two independent background polls (adaptive server status, 3s/10s; launcher self-update,

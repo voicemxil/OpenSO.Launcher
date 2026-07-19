@@ -35,9 +35,13 @@ public sealed class InstallStateService
     };
 
     private readonly string? _installRoot;
+    private readonly Models.LauncherConfig? _config;
 
     public InstallStateService(Models.LauncherConfig? config = null)
-        => _installRoot = config?.ResolvedInstallRoot();
+    {
+        _config = config;
+        _installRoot = config?.ResolvedInstallRoot();
+    }
 
     private IEnumerable<string> Fallbacks(string code)
     {
@@ -78,6 +82,17 @@ public sealed class InstallStateService
 
     public Task<InstallStatus> GetInstallStatusAsync(string code)
     {
+        // TSO is validated, not just present: a detected directory only counts as installed when it holds
+        // the game files the client actually loads (tuning.dat + content dirs — see TsoAssetValidator), so a
+        // truncated/incomplete install does NOT satisfy the FSO dependency or the "assets installed" state.
+        // Detection follows the game's own precedence (managed → registry → legacy path).
+        if (code == "TSO")
+        {
+            var best = TsoInstallDetector.SelectBest(new TsoInstallDetector(_config).Detect());
+            bool complete = best?.Validation.State == TsoInstallState.Complete;
+            return Task.FromResult(new InstallStatus("TSO", complete, best?.Path));
+        }
+
         // The Remesh package has no folder of its own: it lives inside the client's
         // Content/MeshReplace as .fsom files (see RmsInstaller). It's installed iff that folder holds
         // our marker or at least one mesh — so resolve the FSO dir and probe there.
