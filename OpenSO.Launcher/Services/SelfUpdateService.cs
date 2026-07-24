@@ -255,26 +255,15 @@ public sealed class SelfUpdateService : ISelfUpdateService
         var pid = Environment.ProcessId;
         if (OperatingSystem.IsWindows())
         {
-            var exe = Path.Combine(appDir, "OpenSO.Launcher.exe");
             var bat = Path.Combine(Path.GetTempPath(), "openso-launcher-swap-" + pid + ".bat");
-            var sb = new StringBuilder();
-            sb.AppendLine("@echo off");
-            sb.AppendLine(":wait");
-            sb.AppendLine($"tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)");
-            sb.AppendLine($"xcopy /E /Y /I \"{sourceDir}\\*\" \"{appDir}\\\" >NUL");
-            sb.AppendLine($"start \"\" \"{exe}\"");
-            sb.AppendLine($"rmdir /S /Q \"{stagingRoot}\"");
-            // A plain `del "%~f0"` line makes cmd re-read the (now deleted) file for the next
-            // command and strand a window on "The batch file cannot be found." The (goto) idiom
-            // parses the whole line first, ends batch processing, then deletes — no re-read.
-            sb.AppendLine("(goto) 2>nul & del \"%~f0\"");
-            File.WriteAllText(bat, sb.ToString());
-            Process.Start(new ProcessStartInfo("cmd.exe", $"/c start \"\" /min \"{bat}\"")
+            File.WriteAllText(bat, BuildWindowsSwapScript(pid));
+            Process.Start(new ProcessStartInfo("cmd.exe", BuildWindowsSwapArgs(bat, sourceDir, appDir, stagingRoot))
             { UseShellExecute = false, CreateNoWindow = true });
         }
         else
         {
             var exe = Path.Combine(appDir, "OpenSO.Launcher");
+            // (sh reads UTF-8 natively, so Unicode paths may be embedded directly here.)
             var sh = Path.Combine(Path.GetTempPath(), "openso-launcher-swap-" + pid + ".sh");
             var sb = new StringBuilder();
             sb.AppendLine("#!/bin/sh");
@@ -287,5 +276,44 @@ public sealed class SelfUpdateService : ISelfUpdateService
             File.WriteAllText(sh, sb.ToString());
             Process.Start(new ProcessStartInfo("/bin/sh", $"\"{sh}\"") { UseShellExecute = false });
         }
+    }
+
+    /// <summary>
+    /// The Windows swap script. Its content must stay PURE ASCII: cmd.exe decodes batch files in the
+    /// legacy OEM codepage (CP437/CP737/…), never UTF-8, so a literal Unicode profile path (a Greek
+    /// C:\Users\Δημήτρης\…) turns to mojibake and the swap dies with "cannot find the path specified".
+    /// All paths therefore arrive as ARGUMENTS — %1 the staged new files, %2 the install dir, %3 the
+    /// staging root — because process command lines are UTF-16 the whole way (CreateProcessW → cmd →
+    /// xcopy), immune to the codepage. (Args also dodge cmd expanding a literal % in a path.)
+    /// </summary>
+    internal static string BuildWindowsSwapScript(int pid)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("@echo off");
+        sb.AppendLine(":wait");
+        sb.AppendLine($"tasklist /FI \"PID eq {pid}\" 2>NUL | find \"{pid}\" >NUL && (timeout /t 1 /nobreak >NUL & goto wait)");
+        sb.AppendLine("xcopy /E /Y /I \"%~1\\*\" \"%~2\\\" >NUL");
+        sb.AppendLine("start \"\" \"%~2\\OpenSO.Launcher.exe\"");
+        sb.AppendLine("rmdir /S /Q \"%~3\"");
+        // A plain `del "%~f0"` line makes cmd re-read the (now deleted) file for the next
+        // command and strand a window on "The batch file cannot be found." The (goto) idiom
+        // parses the whole line first, ends batch processing, then deletes — no re-read.
+        sb.AppendLine("(goto) 2>nul & del \"%~f0\"");
+        return sb.ToString();
+    }
+
+    /// <summary>cmd.exe arguments running the swap script with the three paths as batch arguments.
+    /// The script runs DIRECTLY under /S /C — not via `start`: starting a .bat re-enters cmd as
+    /// `cmd /K "bat" "args…"`, and /C(/K)'s quote rule mangles any command line holding more than one
+    /// quoted token (it strips the FIRST and LAST quote, gluing the bat path to the arguments), so the
+    /// script never ran. /S pins the rule deterministically: wrap the whole line in one extra quote
+    /// pair, cmd strips exactly that pair, and every inner quoted token survives. Direct execution
+    /// under the launcher's CreateNoWindow console also means NO visible cmd window, ever — the old
+    /// `start "" /min` flashed one (and surfaced mojibake errors to users). Trailing separators are
+    /// trimmed so no path ends in `\"` (an escaped quote to the child's parser, gluing arguments).</summary>
+    internal static string BuildWindowsSwapArgs(string bat, string sourceDir, string appDir, string stagingRoot)
+    {
+        static string Arg(string p) => "\"" + p.TrimEnd('\\', '/') + "\"";
+        return $"/S /C \" {Arg(bat)} {Arg(sourceDir)} {Arg(appDir)} {Arg(stagingRoot)} \"";
     }
 }

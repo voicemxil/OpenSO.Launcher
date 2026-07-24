@@ -142,6 +142,11 @@ internal static class Program
         Test("SelfUpdate atomically replaces the AppImage file and leaves it executable", TestAppImageReplaceFile);
         Test("LauncherHandoff marker prefers $APPIMAGE over the transient mount path", TestHandoffMarkerPrefersAppImage);
 
+        // PHASE 9 — Unicode-profile self-update: cmd.exe reads batch files in the OEM codepage, so the
+        // swap script must stay pure ASCII and take its paths as (UTF-16) command-line arguments.
+        // Regression for Greek/Cyrillic/CJK Windows usernames breaking the launcher update.
+        Test("Windows swap script is pure ASCII and consumes its paths as arguments", TestWindowsSwapScriptUnicodeSafe);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -720,6 +725,36 @@ internal static class Program
             Assert(msg.Contains(SelfUpdateService.CurrentRid()), "the error names this platform's RID");
         }
         finally { stop(); }
+    }
+
+    private static void TestWindowsSwapScriptUnicodeSafe()
+    {
+        // The script used to EMBED the staging/install paths as literal text. cmd decodes batch files
+        // in the legacy OEM codepage (never UTF-8), so a Unicode profile path (C:\Users\Δημήτρης\…)
+        // became mojibake and the update died with "cannot find the path specified". The content must
+        // stay pure ASCII forever; the paths ride the UTF-16 command line as batch arguments instead.
+        var script = SelfUpdateService.BuildWindowsSwapScript(4242);
+        Assert(script.All(c => c <= 127), "swap script contains no non-ASCII character");
+        Assert(script.Contains("\"%~1\\*\"") && script.Contains("\"%~2\\\"") && script.Contains("\"%~3\""),
+            "swap script consumes the three paths as batch arguments");
+        Assert(script.Contains("start \"\" \"%~2\\OpenSO.Launcher.exe\""), "relaunch path derives from the install-dir argument");
+        Assert(!script.Contains(":\\"), "no literal absolute path is baked into the script");
+        Assert(script.Contains("(goto) 2>nul & del \"%~f0\""), "self-delete keeps the no-stranded-window idiom");
+
+        // The paths (Greek profile, spaces, trailing slash) must ride the command line verbatim.
+        var greekProfile = "C:\\Users\\Δημήτρης";
+        var args = SelfUpdateService.BuildWindowsSwapArgs(
+            greekProfile + "\\AppData\\Local\\Temp\\swap.bat",
+            greekProfile + "\\AppData\\Local\\Temp\\stage\\new",
+            greekProfile + "\\AppData\\Local\\OpenSO Launcher\\",
+            greekProfile + "\\AppData\\Local\\Temp\\stage");
+        Assert(args.Contains("\"" + greekProfile + "\\AppData\\Local\\OpenSO Launcher\""),
+            "install dir rides the command line verbatim (quoted, trailing separator trimmed)");
+        Assert(args.StartsWith("/S /C \" \"" + greekProfile + "\\AppData\\Local\\Temp\\swap.bat\" \"") && args.EndsWith(" \""),
+            "bat + args are wrapped in ONE outer quote pair under /S so cmd strips exactly that pair");
+        Assert(!args.Contains("start"),
+            "no `start` hop — starting a .bat re-enters cmd /K, whose /C quote rule mangles a multi-token line");
+        Assert(!args.Contains("\\\""), "no path ends in backslash-quote (child arg-parsing hazard)");
     }
 
     // ---- FIX B: ZIP extraction hardening (adversarial fixtures) ----
