@@ -131,6 +131,17 @@ internal static class Program
         await Test("TsoInstaller.CopyFromExistingAsync refuses an incomplete source (no broken pointer)", TestTsoCopyRejectsIncomplete);
         Test("Client reinstall preserves user data via swap + carry-over (saves/config survive, code refreshed)", TestClientReinstallPreservesUserData);
 
+        // PHASE 8 — Linux packaging. Exec-bit preservation through the self-update swap (a lost +x would
+        // strand an un-runnable launcher), and AppImage self-update: mode detection, exact-RID .AppImage
+        // choice, atomic-replace target-path derivation + the replace itself, and the AppImage handoff
+        // marker. See BUILD_AND_TEST.md → "Linux packaging (zip + AppImage)".
+        await Test("ZipExtractor preserves the unix exec bit on extraction (self-update swap keeps +x)", TestZipExtractorPreservesExecBit);
+        Test("SelfUpdate detects AppImage mode from the APPIMAGE env (pure, injected)", TestAppImageModeDetection);
+        Test("SelfUpdate picks the exact-RID .AppImage in AppImage mode (never the zip / another RID)", TestAppImageAssetSelection);
+        Test("SelfUpdate derives the AppImage download temp as a same-dir sibling (atomic rename)", TestAppImageTargetPathDerivation);
+        Test("SelfUpdate atomically replaces the AppImage file and leaves it executable", TestAppImageReplaceFile);
+        Test("LauncherHandoff marker prefers $APPIMAGE over the transient mount path", TestHandoffMarkerPrefersAppImage);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -1875,6 +1886,113 @@ internal static class Program
             "the user's saves survive a reinstall");
         Assert(File.ReadAllText(Path.Combine(install, "OpenSO.dll")) == "new code",
             "the reinstalled code replaces the old code");
+    }
+
+    // ---- PHASE 8: Linux packaging (exec-bit preservation + AppImage self-update) ----
+
+    private static async Task TestZipExtractorPreservesExecBit()
+    {
+        // Unix-only: the exec bit is a POSIX mode. On Windows there is nothing to preserve (and
+        // File.GetUnixFileMode is unsupported), so self-skip — matching the suite's platform pattern.
+        if (OperatingSystem.IsWindows())
+        {
+            Console.WriteLine("    (skipped on Windows — no unix mode to preserve)");
+            return;
+        }
+
+        var tmp = NewTmp();
+        // A zip whose entries carry unix modes in the high 16 bits of ExternalAttributes, exactly like the
+        // release's `zip -r`: the launcher apphost at 0755 (S_IFREG|rwxr-xr-x) and a data lib at 0644.
+        const int exec0755 = unchecked((int)0x81ED0000); // 0100755 << 16
+        const int data0644 = unchecked((int)0x81A40000); // 0100644 << 16
+        var zip = MakeZipRaw(tmp, "modes.zip",
+            ("OpenSO.Launcher", "#!apphost", exec0755),
+            ("libSkiaSharp.so", "data",      data0644));
+
+        var outDir = Path.Combine(tmp, "out");
+        // The self-update swap extracts with preservePermissions=true on Unix (SelfUpdateService).
+        await ZipExtractor.ExtractAsync(zip, outDir, preservePermissions: true);
+
+        var exeMode = File.GetUnixFileMode(Path.Combine(outDir, "OpenSO.Launcher"));
+        Assert(exeMode.HasFlag(UnixFileMode.UserExecute), "extracted apphost keeps its +x (owner execute)");
+        Assert(exeMode.HasFlag(UnixFileMode.GroupExecute) && exeMode.HasFlag(UnixFileMode.OtherExecute),
+            "0755 execute bits survive extraction (a self-update that dropped +x would strand an un-runnable launcher)");
+
+        var dataMode = File.GetUnixFileMode(Path.Combine(outDir, "libSkiaSharp.so"));
+        Assert(!dataMode.HasFlag(UnixFileMode.UserExecute), "a 0644 data file is NOT made executable");
+    }
+
+    private static void TestAppImageModeDetection()
+    {
+        Assert(SelfUpdateService.AppImagePath(_ => "/home/u/Apps/OpenSO-Launcher-linux-x64.AppImage")
+               == "/home/u/Apps/OpenSO-Launcher-linux-x64.AppImage", "APPIMAGE set → the AppImage path");
+        Assert(SelfUpdateService.AppImagePath(_ => "  /a/b.AppImage  ") == "/a/b.AppImage", "APPIMAGE value is trimmed");
+        Assert(SelfUpdateService.AppImagePath(_ => null) == null, "APPIMAGE unset → not an AppImage (zip-swap path)");
+        Assert(SelfUpdateService.AppImagePath(_ => "   ") == null, "blank APPIMAGE → not an AppImage");
+    }
+
+    private static void TestAppImageAssetSelection()
+    {
+        // A release ships both the zip (swap-install self-update) and the AppImage. AppImage mode must pick
+        // the .AppImage for this RID — never the zip, and never another platform's AppImage.
+        var assets = new (string?, string?, string?)[]
+        {
+            ("OpenSO-Launcher-linux-x64.AppImage",   "u-linux-appimage", "sha256:aa"),
+            ("OpenSO.Launcher-linux-x64.zip",        "u-linux-zip",      "sha256:bb"),
+            ("OpenSO-Launcher-linux-arm64.AppImage", "u-arm-appimage",   "sha256:cc"),
+        };
+        var picked = SelfUpdateService.PickLauncherAsset(assets, "linux-x64", SelfUpdateService.AppImageSuffix);
+        Assert(picked.url == "u-linux-appimage", "AppImage mode picks the exact-RID .AppImage, not the .zip");
+        Assert(picked.sha256 == "sha256:aa", "the picked AppImage's digest rides along for verification");
+
+        Assert(SelfUpdateService.PickLauncherAsset(assets, "linux-x64").url == "u-linux-zip",
+            "zip-mode self-update still picks the .zip (unchanged behavior)");
+        Assert(SelfUpdateService.PickLauncherAsset(assets, "osx-arm64", SelfUpdateService.AppImageSuffix).url == null,
+            "a RID absent from the release borrows no other platform's AppImage");
+    }
+
+    private static void TestAppImageTargetPathDerivation()
+    {
+        var dir = NewTmp();
+        var appimage = Path.Combine(dir, "OpenSO.AppImage");
+        var target = SelfUpdateService.AppImageSiblingTemp(appimage, 4242);
+        Assert(Path.GetDirectoryName(target) == Path.GetFullPath(dir),
+            "the download temp is a sibling in the SAME dir (same filesystem → atomic rename)");
+        Assert(Path.GetFileName(target)!.StartsWith(".") && Path.GetFileName(target)!.Contains("4242"),
+            "the temp is a hidden, pid-tagged sibling of the .AppImage");
+        Assert(!string.Equals(target, Path.GetFullPath(appimage), StringComparison.Ordinal),
+            "the temp is never the live AppImage itself");
+    }
+
+    private static void TestAppImageReplaceFile()
+    {
+        // The actual file replacement, exercised with plain files in a temp dir (no network, any OS): the
+        // "downloaded" new AppImage atomically replaces the "current" one and comes out executable on Unix.
+        var dir = NewTmp();
+        var current = Path.Combine(dir, "OpenSO.AppImage");
+        var incoming = Path.Combine(dir, ".OpenSO.AppImage.new-1");
+        File.WriteAllText(current, "OLD-APPIMAGE-BYTES");
+        File.WriteAllText(incoming, "NEW-APPIMAGE-BYTES");
+
+        SelfUpdateService.ReplaceAppImageFile(incoming, current);
+
+        Assert(File.ReadAllText(current) == "NEW-APPIMAGE-BYTES", "the live AppImage now holds the new bytes");
+        Assert(!File.Exists(incoming), "the temp download was renamed into place, not left behind");
+        if (!OperatingSystem.IsWindows())
+            Assert(File.GetUnixFileMode(current).HasFlag(UnixFileMode.UserExecute),
+                "the replaced AppImage is executable (+x) so it can relaunch");
+    }
+
+    private static void TestHandoffMarkerPrefersAppImage()
+    {
+        // Under AppImage the marker must name $APPIMAGE (persistent), not ProcessPath (the /tmp/.mount_* squashfs).
+        Assert(LauncherHandoff.ResolveMarkerPath("/home/u/OpenSO.AppImage", "/tmp/.mount_abc/usr/bin/OpenSO.Launcher")
+               == "/home/u/OpenSO.AppImage", "APPIMAGE set → marker names the persistent .AppImage, not the transient mount");
+        Assert(LauncherHandoff.ResolveMarkerPath(null, "/opt/openso/OpenSO.Launcher") == "/opt/openso/OpenSO.Launcher",
+            "no APPIMAGE → marker falls back to the process/apphost path");
+        Assert(LauncherHandoff.ResolveMarkerPath("  ", "/opt/openso/OpenSO.Launcher") == "/opt/openso/OpenSO.Launcher",
+            "blank APPIMAGE is ignored (falls back to the apphost path)");
+        Assert(LauncherHandoff.ResolveMarkerPath(null, null) == null, "nothing resolvable → null (best-effort no-op)");
     }
 
     // ---- harness ----

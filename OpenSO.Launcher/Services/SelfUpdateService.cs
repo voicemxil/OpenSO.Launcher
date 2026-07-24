@@ -50,6 +50,16 @@ public sealed class SelfUpdateService : ISelfUpdateService
 
     public async Task ApplyLauncherUpdateAsync(IProgress<ProgressReport> progress, CancellationToken ct = default)
     {
+        // AppImage install: the whole launcher IS the single file at $APPIMAGE. There is no dir to swap —
+        // download the new .AppImage, verify it, atomically replace $APPIMAGE, and relaunch it. The
+        // zip-swap path below is for the tarball install (and existing pre-AppImage installs on any OS).
+        var appImagePath = AppImagePath();
+        if (appImagePath != null)
+        {
+            await ApplyAppImageUpdateAsync(appImagePath, progress, ct);
+            return;
+        }
+
         var (tag, assetUrl, assetSha256) = await ResolveLatestAsync(ct);
         if (tag == null)
             throw new InvalidOperationException("No launcher update is available right now (the update feed is unreachable).");
@@ -77,9 +87,96 @@ public sealed class SelfUpdateService : ISelfUpdateService
         // The caller must shut the launcher down now so the swap script can replace the no-longer-running files.
     }
 
+    // ── AppImage self-update ─────────────────────────────────────────────────────────────────────
+    // When the launcher runs as an AppImage, Environment.ProcessPath points into the transient
+    // /tmp/.mount_* squashfs (read-only, gone at exit); the real, updatable file is the .AppImage the
+    // AppImage runtime records in the APPIMAGE env var. Self-update here is a single-file replace, not a
+    // dir swap: download the new .AppImage, verify it, atomically rename it over $APPIMAGE, relaunch.
+
+    internal const string AppImageEnvVar = "APPIMAGE";
+
+    /// <summary>The absolute path of the running .AppImage (from the <c>APPIMAGE</c> env var the AppImage
+    /// runtime sets), or null when the launcher is not running as an AppImage. <paramref name="getEnv"/> is
+    /// injectable so the mode decision is a pure, testable function.</summary>
+    internal static string? AppImagePath(Func<string, string?>? getEnv = null)
+    {
+        getEnv ??= Environment.GetEnvironmentVariable;
+        var v = getEnv(AppImageEnvVar);
+        return string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+    }
+
+    /// <summary>The download target for a new AppImage: a hidden sibling in the SAME directory as
+    /// <paramref name="appImagePath"/>, so replacing the original is an atomic same-filesystem rename.</summary>
+    internal static string AppImageSiblingTemp(string appImagePath, int pid)
+    {
+        var full = Path.GetFullPath(appImagePath);
+        var dir = Path.GetDirectoryName(full) ?? ".";
+        return Path.Combine(dir, "." + Path.GetFileName(full) + ".new-" + pid);
+    }
+
+    /// <summary>Atomically replaces <paramref name="targetAppImage"/> with <paramref name="newFile"/> and
+    /// makes it executable. The running AppImage keeps its now-unlinked inode mounted, so overwriting the
+    /// very file it launched from is safe (the rename only swaps the directory entry). Pure enough to test
+    /// with plain files on any OS (the chmod is a no-op off Unix).</summary>
+    internal static void ReplaceAppImageFile(string newFile, string targetAppImage)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            // rwxr-xr-x — an AppImage must be executable to launch.
+            try { File.SetUnixFileMode(newFile, (UnixFileMode)0x1ED); } catch { /* best effort */ }
+        }
+        File.Move(newFile, targetAppImage, overwrite: true);
+    }
+
+    private async Task ApplyAppImageUpdateAsync(string appImagePath, IProgress<ProgressReport> progress, CancellationToken ct)
+    {
+        var (tag, assetUrl, assetSha256) = await ResolveLatestAsync(ct, wantAppImage: true);
+        if (tag == null)
+            throw new InvalidOperationException("No launcher update is available right now (the update feed is unreachable).");
+        if (assetUrl == null)
+            throw new PlatformNotSupportedException(
+                $"This launcher release does not include an AppImage build for your platform ({CurrentRid()}) yet.");
+        RemoteUrl.RequireHttps(assetUrl, "the launcher update");
+
+        var tmp = AppImageSiblingTemp(appImagePath, Environment.ProcessId);
+        progress.Report(new ProgressReport("Updating launcher", 0.0, "Downloading " + tag + "…"));
+        // Verify the GitHub asset digest when the feed carries one; DownloadService deletes-and-throws on a
+        // mismatch so a tampered AppImage never reaches disk-as-final. When the feed has no digest, the
+        // download still can't be empty (DownloadService throws on a zero-byte response) — a size sanity below.
+        try
+        {
+            await new DownloadService(assetUrl, tmp, expectedSha256: assetSha256).RunAsync(progress, ct);
+            if (new FileInfo(tmp).Length <= 0)
+                throw new IOException("The downloaded AppImage was empty.");
+
+            progress.Report(new ProgressReport("Updating launcher", 0.97, "Restarting…"));
+            ReplaceAppImageFile(tmp, appImagePath);
+        }
+        catch
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best effort */ }
+            throw;
+        }
+        SpawnRelaunchAppImage(appImagePath, Environment.ProcessId);
+        // The caller shuts the launcher down; the tiny relaunch script waits for it to exit, then starts the
+        // (now replaced) $APPIMAGE. No file-in-use conflict — the new AppImage mounts its own fresh inode.
+    }
+
+    private static void SpawnRelaunchAppImage(string appImagePath, int pid)
+    {
+        var sh = Path.Combine(Path.GetTempPath(), "openso-launcher-appimage-relaunch-" + pid + ".sh");
+        var sb = new StringBuilder();
+        sb.AppendLine("#!/bin/sh");
+        sb.AppendLine($"while kill -0 {pid} 2>/dev/null; do sleep 1; done");
+        sb.AppendLine($"\"{appImagePath}\" &");
+        sb.AppendLine("rm -- \"$0\"");
+        File.WriteAllText(sh, sb.ToString());
+        Process.Start(new ProcessStartInfo("/bin/sh", $"\"{sh}\"") { UseShellExecute = false });
+    }
+
     /// <summary>Fetch releases/latest; return (tagName-without-leading-v, assetUrlForThisRid, assetSha256) — any may be null.
     /// The sha256 comes from the GitHub asset's <c>digest</c> field ("sha256:&lt;hex&gt;") when present.</summary>
-    private async Task<(string? tag, string? assetUrl, string? assetSha256)> ResolveLatestAsync(CancellationToken ct)
+    private async Task<(string? tag, string? assetUrl, string? assetSha256)> ResolveLatestAsync(CancellationToken ct, bool wantAppImage = false)
     {
         try
         {
@@ -95,12 +192,17 @@ public sealed class SelfUpdateService : ISelfUpdateService
                     list.Add((a.TryGetProperty("name", out var n) ? n.GetString() : null,
                               a.TryGetProperty("browser_download_url", out var u) ? u.GetString() : null,
                               a.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null));
-                (assetUrl, assetSha256) = PickLauncherAsset(list, CurrentRid());
+                (assetUrl, assetSha256) = PickLauncherAsset(list, CurrentRid(), wantAppImage ? AppImageSuffix : ZipSuffix);
             }
             return (tag?.TrimStart('v', 'V'), assetUrl, assetSha256);
         }
         catch { return (null, null, null); }
     }
+
+    // The self-update asset extensions. The tar/zip install swaps in a ".zip"; an AppImage install
+    // replaces itself with the single ".AppImage" file (see the AppImage self-update path above).
+    private const string ZipSuffix = ".zip";
+    internal const string AppImageSuffix = ".AppImage";
 
     /// <summary>
     /// Picks the launcher zip for this EXACT <paramref name="rid"/> from a release's assets. Exact-RID
@@ -113,11 +215,17 @@ public sealed class SelfUpdateService : ISelfUpdateService
         => PickLauncherAsset(System.Linq.Enumerable.Select(assets, a => (a.name, a.url, (string?)null)), rid).url;
 
     internal static (string? url, string? sha256) PickLauncherAsset(IEnumerable<(string? name, string? url, string? digest)> assets, string rid)
+        => PickLauncherAsset(assets, rid, ZipSuffix);
+
+    /// <summary>As the two-arg overload, but for an explicit asset extension — <c>".zip"</c> for the
+    /// swap-and-relaunch install, <c>".AppImage"</c> for an AppImage install. Exact-RID only (no
+    /// cross-platform fallback), same as the zip path.</summary>
+    internal static (string? url, string? sha256) PickLauncherAsset(IEnumerable<(string? name, string? url, string? digest)> assets, string rid, string suffix)
     {
         foreach (var (name, url, digest) in assets)
         {
             if (name == null || url == null) continue;
-            if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
             if (name.Contains(rid, StringComparison.OrdinalIgnoreCase)) return (url, digest); // exact platform match only
         }
         return (null, null);
