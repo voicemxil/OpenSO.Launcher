@@ -203,6 +203,10 @@ The Linux release ships **two** assets, both for `linux-x64`:
   256px PNG rendered from `Assets/openso-glyph.svg`), then `appimagetool ... --appimage-extract-and-run
   --no-appstream` (extract-and-run because CI has no FUSE; `--no-appstream` because we ship no metainfo). The
   zip continues to be published unchanged alongside it.
+  The embedded AppImage **runtime is pinned and SHA-256-verified** in the workflow (a static-pie build of
+  `AppImage/type2-runtime` passed via `--runtime-file`): users need no `libfuse2`, so double-click works on
+  stock Ubuntu 22.04+. If upstream rotates the continuous runtime asset, the hash check fails the release
+  loudly — download the new runtime, confirm `file` reports "static-pie linked", and bump the hash.
 
 ### Exec bit (both the release zip and the self-update swap)
 
