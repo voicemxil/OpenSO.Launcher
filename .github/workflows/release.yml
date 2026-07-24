@@ -179,6 +179,15 @@ jobs:
           cp "$APPDIR/openso-launcher.png" "$APPDIR/.DirIcon"
 
           # ── Build with appimagetool ───────────────────────────────────────────────────────────────
+          # The runtime embedded in the produced AppImage is pinned + hash-verified rather than letting
+          # appimagetool fetch "latest continuous" at build time. This build of the type2-runtime is
+          # static-pie linked: users need NO libfuse2 — double-click works on stock Ubuntu 22.04+.
+          # If upstream rotates the continuous asset this check fails loudly: download the new runtime,
+          # confirm `file` still says "static-pie linked", and bump the hash deliberately.
+          RUNTIME=runtime-x86_64
+          curl -fsSL -o "$RUNTIME" \
+            "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
+          echo "1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf  $RUNTIME" | sha256sum -c -
           TOOL=appimagetool-x86_64.AppImage
           curl -fsSL -o "$TOOL" \
             "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
@@ -186,6 +195,7 @@ jobs:
           # CI has no FUSE → run the tool via extract-and-run. --no-appstream skips appstreamcli validation
           # (we ship no AppStream metainfo). ARCH is required by appimagetool; VERSION is embedded metadata.
           ARCH=x86_64 VERSION="$VER" ./"$TOOL" --appimage-extract-and-run --no-appstream \
+            --runtime-file "$RUNTIME" \
             "$APPDIR" "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
           chmod +x "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
           ls -l "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
