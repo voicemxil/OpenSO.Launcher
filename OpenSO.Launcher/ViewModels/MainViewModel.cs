@@ -37,6 +37,7 @@ public partial class MainViewModel : ObservableObject
     private readonly StatusService _status;
     private readonly LauncherSettings _settings;
     private string? _fsoPath;
+    private string? _tsoClientPath;
 
     /// <summary>Cancelled when the app shuts down — ends the clock/status polling loops so no
     /// background work outlives the window (see App.OnFrameworkInitializationCompleted).</summary>
@@ -448,6 +449,12 @@ public partial class MainViewModel : ObservableObject
             AssetsIncomplete = tsoState == TsoInstallState.Incomplete;
             RemeshInstalled = rms?.IsInstalled == true;
             _fsoPath = ClientInstalled ? fso!.Path : null;
+            // Original-TSO city maps (ids < 100) live under the TSO install, not the client. Use the
+            // validator's RESOLVED TSOClient dir so both candidate forms ("The Sims Online" parent and a
+            // legacy path pointing straight at TSOClient) land on the same place. Not gated on Complete:
+            // the banner is cosmetic and CityMaps checks the file itself, so a partial install can still
+            // show its map.
+            _tsoClientPath = tsoBest?.Validation.TsoClientDir;
             InstalledGameVersion = ClientInstalled ? ReadGameVersion(_fsoPath) : null;
             ClientState = ClientInstalled ? $"Installed → {fso!.Path}" : "Not installed";
             AssetsState = DescribeTso(tsoBest, tsoState);
@@ -583,19 +590,18 @@ public partial class MainViewModel : ObservableObject
     /// servers still show a (best-guess) thumbnail.</summary>
     private string? _serverCityMapId;
 
-    /// <summary>(Re)loads the city map thumbnail from the installed client — the literal thumbnail.png
-    /// the map ships (Content/Cities/city_{map}/thumbnail.png, where {map} is the shard's advertised
-    /// map, falling back to LauncherConfig.CityMapId). No-op when the same file is already showing;
-    /// clears the banner when the client is gone. Corrupt/unreadable image => no banner.</summary>
+    /// <summary>(Re)loads the city map thumbnail — the literal thumbnail the map ships, resolved by
+    /// CityMaps from the shard's advertised map (falling back to LauncherConfig.CityMapId).
+    /// An OpenSO map lives in the client, an original-TSO map in the TSO install, so both paths are
+    /// offered. No-op when the same file is already showing; clears the banner when the client is
+    /// gone. Corrupt/unreadable image => no banner.</summary>
     private void LoadCityThumbnail()
     {
         try
         {
-            var path = ClientInstalled && _fsoPath != null
-                ? System.IO.Path.Combine(_fsoPath, "Content", "Cities",
-                    $"city_{_serverCityMapId ?? _config.CityMapId}", "thumbnail.png")
+            var path = ClientInstalled
+                ? CityMaps.ResolveThumbnail(_serverCityMapId ?? _config.CityMapId, _fsoPath, _tsoClientPath)
                 : null;
-            if (path != null && !System.IO.File.Exists(path)) path = null;
             if (path == _cityThumbLoadedFrom) return;
 
             var old = CityThumbnail;

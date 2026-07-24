@@ -33,6 +33,7 @@
     <Compile Include="..\OpenSO.Launcher\Services\SelfUpdateService.cs" Link="src\SelfUpdateService.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\PollGate.cs" Link="src\PollGate.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\StatusDisplay.cs" Link="src\StatusDisplay.cs" />
+    <Compile Include="..\OpenSO.Launcher\Services\CityMaps.cs" Link="src\CityMaps.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\Extraction\ArchivePathGuard.cs" Link="src\ArchivePathGuard.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\RegistryWriter.cs" Link="src\RegistryWriter.cs" />
     <Compile Include="..\OpenSO.Launcher\Services\TsoAssetValidator.cs" Link="src\TsoAssetValidator.cs" />

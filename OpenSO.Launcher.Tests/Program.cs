@@ -147,6 +147,11 @@ internal static class Program
         // Regression for Greek/Cyrillic/CJK Windows usernames breaking the launcher update.
         Test("Windows swap script is pure ASCII and consumes its paths as arguments", TestWindowsSwapScriptUnicodeSafe);
 
+        // PHASE 8 — city map thumbnails span two content sets: OpenSO maps (>= 100) ship in the client,
+        // original TSO maps (< 100, e.g. live Genesis on 0013) come from the TSO install.
+        Test("CityMaps resolves a TSO map to the TSO install and an OpenSO map to the client", TestCityMapsSplitsByMapId);
+        Test("CityMaps fails safely on junk ids, missing installs and absent thumbnails", TestCityMapsFailsSafely);
+
         if (Environment.GetEnvironmentVariable("OPENSO_LIVE_INSTALL_REPRO") == "1")
             await LiveInstallRepro();
 
@@ -755,6 +760,70 @@ internal static class Program
         Assert(!args.Contains("start"),
             "no `start` hop — starting a .bat re-enters cmd /K, whose /C quote rule mangles a multi-token line");
         Assert(!args.Contains("\\\""), "no path ends in backslash-quote (child arg-parsing hazard)");
+    }
+
+    /// <summary>Builds a fake install pair: the client (Content/Cities, PNG) and the TSO game, each
+    /// seeded with the given city ids. Returns the TSOClient dir (what TsoValidation.TsoClientDir
+    /// resolves to), not its "The Sims Online" parent.</summary>
+    private static (string fso, string tso) MakeCityFixture(int[] fsoMaps, int[] tsoMaps)
+    {
+        var tmp = NewTmp();
+        var fso = Path.Combine(tmp, "FSO");
+        var tso = Path.Combine(tmp, "The Sims Online", "TSOClient");
+        foreach (var id in fsoMaps)
+        {
+            var d = Path.Combine(fso, "Content", "Cities", $"city_{id:0000}");
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "thumbnail.png"), "png");
+        }
+        foreach (var id in tsoMaps)
+        {
+            var d = Path.Combine(tso, "cities", $"city_{id:0000}");
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "thumbnail.bmp"), "bmp");
+        }
+        return (fso, tso);
+    }
+
+    private static void TestCityMapsSplitsByMapId()
+    {
+        // The live server advertises Genesis as map 0013 — an ORIGINAL TSO map. The launcher used to
+        // look only in the client's Content/Cities, found nothing, and showed no banner at all.
+        var (fso, tso) = MakeCityFixture(fsoMaps: new[] { 100, 101 }, tsoMaps: new[] { 13, 1 });
+
+        var genesis = CityMaps.ResolveThumbnail("0013", fso, tso);
+        Assert(genesis == Path.Combine(tso, "cities", "city_0013", "thumbnail.bmp"),
+            "a TSO map (< 100) resolves to the TSO install's BMP, not the client");
+        Assert(CityMaps.ResolveThumbnail("0001", fso, tso) != null, "the other original TSO maps resolve too");
+
+        Assert(CityMaps.ResolveThumbnail("0101", fso, tso) == Path.Combine(fso, "Content", "Cities", "city_0101", "thumbnail.png"),
+            "an OpenSO map (>= 100) still resolves to the client's PNG");
+
+        // 100 is the exact boundary between the two content sets.
+        Assert(CityMaps.ResolveThumbnail("0100", fso, tso)!.StartsWith(fso), "map 100 is the first client-side map");
+        Assert(CityMaps.ResolveThumbnail("0099", fso, tso) == null, "map 99 is looked up TSO-side (absent here) — never client-side");
+
+        // fso_shards.map is an unvalidated varchar, so a hand-edited row may not be zero-padded.
+        Assert(CityMaps.ResolveThumbnail("13", fso, tso) == genesis, "an unpadded id resolves to the same city_0013 folder");
+        Assert(CityMaps.ResolveThumbnail(" 0013 ", fso, tso) == genesis, "surrounding whitespace is tolerated");
+    }
+
+    private static void TestCityMapsFailsSafely()
+    {
+        var (fso, tso) = MakeCityFixture(fsoMaps: new[] { 101 }, tsoMaps: new[] { 13 });
+
+        // The client would throw on int.Parse here; the launcher must just show no banner.
+        foreach (var junk in new[] { null, "", "   ", "abc", "0x13", "-1" })
+            Assert(CityMaps.ResolveThumbnail(junk, fso, tso) == null, $"junk map id \"{junk ?? "<null>"}\" yields no banner (no throw)");
+
+        // A map whose owning component isn't installed must not fall through to the other root.
+        Assert(CityMaps.ResolveThumbnail("0013", fso, null) == null, "a TSO map with no TSO install resolves to nothing");
+        Assert(CityMaps.ResolveThumbnail("0101", null, tso) == null, "an OpenSO map with no client install resolves to nothing");
+        Assert(CityMaps.ResolveThumbnail("0013", fso, "") == null, "a blank install path is treated as not-installed");
+
+        // Present install, but that map ships no thumbnail.
+        Assert(CityMaps.ResolveThumbnail("0021", fso, tso) == null, "an absent TSO map yields no banner");
+        Assert(CityMaps.ResolveThumbnail("0102", fso, tso) == null, "an absent OpenSO map yields no banner");
     }
 
     // ---- FIX B: ZIP extraction hardening (adversarial fixtures) ----

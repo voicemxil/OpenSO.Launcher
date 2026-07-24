@@ -44,10 +44,12 @@ public class LauncherConfig
     public string WebsiteUrl { get; set; } = "https://openso.org";
     public string ApiBaseUrl { get; set; } = "https://api.openso.org";
     public string GameServerHost { get; set; } = "play.openso.org";
-    /// <summary>FALLBACK city map for the SERVER STATUS card thumbnail (Content/Cities folder suffix —
-    /// city_{id}/thumbnail.png), used only while the server's /userapi/status hasn't advertised the
-    /// active shard's map (shards[].map). 0101 matches the Genesis shard's map.</summary>
-    public string CityMapId { get; set; } = "0101";
+    /// <summary>FALLBACK city map for the SERVER STATUS card thumbnail, used only while the server's
+    /// /userapi/status hasn't advertised the active shard's map (shards[].map). 0013 is what the live
+    /// Genesis shard actually runs — an ORIGINAL TSO map, so its thumbnail comes from the TSO install,
+    /// not the client's Content/Cities (see CityMaps for the &gt;= 100 split). Genesis was once
+    /// intended to run the client-bundled 0101 recreation of the same map; it does not.</summary>
+    public string CityMapId { get; set; } = "0013";
     public string? InstallPath { get; set; }
     public Dictionary<string, string> ResourceCentral { get; set; } = new()
     {
