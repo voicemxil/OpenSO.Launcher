@@ -110,9 +110,92 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then BIN="publish/OpenSO.Launcher.exe"; else BIN="publish/OpenSO.Launcher"; chmod +x "$BIN"; fi
           "$BIN" --smoke
 
+      - name: Add Linux README.txt to the zip
+        # Linux players unzip ~90 files and can't tell which one to run. A few-line README names the
+        # binary (./OpenSO.Launcher), gives the chmod fallback (GUI extractors can drop the exec bit),
+        # and points at the AppImage + where game data actually lives. Added to publish/ BEFORE the zip.
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          printf '%s\n' \
+            'OpenSO Launcher — Linux (x64)' \
+            '' \
+            'To run the launcher:' \
+            '  1. Open a terminal in this folder.' \
+            '  2. Make it executable if needed:  chmod +x OpenSO.Launcher' \
+            '  3. Start it:                      ./OpenSO.Launcher' \
+            '' \
+            'Prefer one double-clickable file? Download OpenSO-Launcher-linux-x64.AppImage from' \
+            'the same release instead of this zip.' \
+            '' \
+            'Your OpenSO game files, saves and launcher settings are NOT kept in this folder — the' \
+            'game installs under ~/.local/share/OpenSO (or $XDG_DATA_HOME/OpenSO) and settings under' \
+            '~/.config/OpenSO Launcher, so you can move or delete this folder without losing anything.' \
+            > publish/README.txt
+
       - name: Zip (Unix)
         if: runner.os != 'Windows'
         run: ( cd publish && zip -r "../OpenSO.Launcher-${{ matrix.rid }}.zip" . )
+
+      - name: Build AppImage (linux-x64)
+        # A single double-clickable file with its own name + icon — the format Linux users recognize.
+        # The RID-named .zip is still published (unchanged) alongside this for existing installs' self-update.
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER="${{ steps.ver.outputs.num }}"
+
+          # ── Assemble the AppDir ───────────────────────────────────────────────────────────────────
+          APPDIR=AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin"
+          cp -R publish/. "$APPDIR/usr/bin/"
+          chmod +x "$APPDIR/usr/bin/OpenSO.Launcher"
+
+          # AppRun — the AppImage entry point. Resolve our own dir (inside the squashfs mount) and exec the
+          # launcher, forwarding args (e.g. the game's --update-game handoff).
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'HERE="$(dirname "$(readlink -f "$0")")"' \
+            'exec "$HERE/usr/bin/OpenSO.Launcher" "$@"' > "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+
+          # Desktop entry — Name + Categories=Game so file managers / app menus show a real name + icon.
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Type=Application' \
+            'Name=OpenSO Launcher' \
+            'Comment=Install, update and play OpenSO (The Sims Online)' \
+            'Exec=OpenSO.Launcher' \
+            'Icon=openso-launcher' \
+            'Categories=Game;' \
+            'Terminal=false' > "$APPDIR/openso-launcher.desktop"
+
+          # Icon — render the brand glyph SVG (the same source the macOS .icns is built from) to a 256px PNG.
+          sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin >/dev/null
+          rsvg-convert -w 256 -h 256 "OpenSO.Launcher/Assets/openso-glyph.svg" -o "$APPDIR/openso-launcher.png"
+          # appimagetool copies the top-level icon named by the .desktop Icon= key to .DirIcon; make it explicit.
+          cp "$APPDIR/openso-launcher.png" "$APPDIR/.DirIcon"
+
+          # ── Build with appimagetool ───────────────────────────────────────────────────────────────
+          TOOL=appimagetool-x86_64.AppImage
+          curl -fsSL -o "$TOOL" \
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x "$TOOL"
+          # CI has no FUSE → run the tool via extract-and-run. --no-appstream skips appstreamcli validation
+          # (we ship no AppStream metainfo). ARCH is required by appimagetool; VERSION is embedded metadata.
+          ARCH=x86_64 VERSION="$VER" ./"$TOOL" --appimage-extract-and-run --no-appstream \
+            "$APPDIR" "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
+          chmod +x "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
+          ls -l "OpenSO-Launcher-${{ matrix.rid }}.AppImage"
+
+      - name: Upload AppImage
+        if: matrix.rid == 'linux-x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launcher-appimage-linux-x64
+          path: OpenSO-Launcher-linux-x64.AppImage
 
       - name: macOS .app bundle + DMG
         if: runner.os == 'macOS'
@@ -214,7 +297,7 @@ jobs:
       - name: Report artifact size
         shell: bash
         run: |
-          for f in OpenSO.Launcher-*.zip; do
+          for f in OpenSO.Launcher-*.zip OpenSO-Launcher-*.AppImage; do
             [ -e "$f" ] || continue
             SZ=$(du -h "$f" | cut -f1)
             echo "$f = $SZ"
@@ -258,4 +341,5 @@ jobs:
             artifacts/*.zip
             artifacts/*.exe
             artifacts/*.dmg
+            artifacts/*.AppImage
           fail_on_unmatched_files: true

@@ -187,6 +187,56 @@ app on a real desktop session; verify the window renders after any Avalonia/trim
   runtime verification on real Windows/Linux — which can't be done from a macOS dev box — so it's left as a
   recommended follow-up rather than shipped unverified.
 
+## Linux packaging (zip + AppImage)
+
+The Linux release ships **two** assets, both for `linux-x64`:
+
+- **`OpenSO.Launcher-linux-x64.zip`** — the same self-contained multi-file publish as every platform, name
+  and layout **unchanged**. This is what existing installs' self-update swaps in (`SelfUpdateService`
+  relaunches `$INSTALL/OpenSO.Launcher`), so it must keep its exact name and the `OpenSO.Launcher` apphost.
+  A short **`README.txt`** is added to the zip (packaging step) that names the binary (`./OpenSO.Launcher`),
+  gives the `chmod +x` fallback, and notes that game data/saves/settings live under `~/.local/share/OpenSO`
+  (or `$XDG_DATA_HOME`) and `~/.config/OpenSO Launcher`, not in the unzipped folder.
+- **`OpenSO-Launcher-linux-x64.AppImage`** — a single double-clickable file with its own `Name=OpenSO Launcher`
+  and icon (the format most Linux users recognize). Built in `release.yml` (linux-x64 leg only): assemble an
+  AppDir (`AppRun` → `usr/bin/OpenSO.Launcher`, an `openso-launcher.desktop` with `Categories=Game;`, and a
+  256px PNG rendered from `Assets/openso-glyph.svg`), then `appimagetool ... --appimage-extract-and-run
+  --no-appstream` (extract-and-run because CI has no FUSE; `--no-appstream` because we ship no metainfo). The
+  zip continues to be published unchanged alongside it.
+
+### Exec bit (both the release zip and the self-update swap)
+
+The Linux apphost must be executable. Two independent paths preserve that, and both are verified:
+
+- **Release zip.** `zip -r` stores unix modes (host = unix) and `unzip` restores them, so `OpenSO.Launcher`
+  comes out `0755`. (GUI extractors sometimes drop the bit — hence the README's `chmod +x` line.)
+- **Self-update swap.** `ZipExtractor` extracts with `preservePermissions: true` on Unix and restores each
+  entry's mode from the high 16 bits of `ExternalAttributes` (the same field `zip -r` writes) — so the
+  swapped-in binary keeps `+x`. A lost bit here would strand an un-runnable launcher; the regression test
+  **"ZipExtractor preserves the unix exec bit on extraction"** (Unix-only, self-skips on Windows) locks it in.
+
+### AppImage self-update
+
+Inside an AppImage, `Environment.ProcessPath` points into the transient `/tmp/.mount_*` squashfs; the real,
+updatable file is `$APPIMAGE`. `SelfUpdateService` detects this (`AppImagePath` — reads the `APPIMAGE` env)
+and takes a **single-file replace** path instead of the dir swap: it resolves the update from the **same**
+release feed but picks the `.AppImage` asset for this RID (`PickLauncherAsset(..., AppImageSuffix)`), downloads
+to a hidden same-dir sibling (`AppImageSiblingTemp` → atomic same-filesystem rename), verifies it (the feed's
+`sha256` digest when present, else a non-empty sanity check — `DownloadService` throws on an empty response),
+atomically renames it over `$APPIMAGE` and `chmod +x` (`ReplaceAppImageFile`), then relaunches `$APPIMAGE` and
+exits. Overwriting the running AppImage is safe: the rename only swaps the directory entry, and the running
+process keeps its now-unlinked inode mounted until it exits. The mode decision, asset choice, target-path
+derivation, and the replace itself are pure/injectable seams and are headlessly tested.
+
+**Handoff marker under AppImage.** `LauncherHandoff` writes `$APPIMAGE` when set (via `ResolveMarkerPath`),
+not the dead mount path, so the game's `Process.Start` of the marker starts the real, persistent AppImage
+(an ELF with the exec bit). Tested via env injection.
+
+**Install root is unaffected.** The game install root (`LauncherConfig.DefaultInstallRoot` → `$XDG_DATA_HOME`
+/`~/.local/share/OpenSO`, legacy `~/OpenSO` kept if present) and launcher settings (`SpecialFolder.Application‑
+Data` → `~/.config/OpenSO Launcher`) are XDG-based and never derived from the executable's directory, so the
+read-only AppImage mount is a non-issue — no migration needed.
+
 ## Archive-extraction security policy
 
 Every archive the launcher unpacks (game client, launcher self-update, TSO assets, remesh pack) comes

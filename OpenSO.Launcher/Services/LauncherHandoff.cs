@@ -38,12 +38,28 @@ internal static class LauncherHandoff
 
     /// <summary>This launcher's own executable path. <see cref="Environment.ProcessPath"/> resolves
     /// correctly for the published self-contained/single-file apphost; the current process's main-module
-    /// path is a fallback for hosts where <c>ProcessPath</c> is unavailable.</summary>
+    /// path is a fallback for hosts where <c>ProcessPath</c> is unavailable.
+    ///
+    /// Under an AppImage, <c>ProcessPath</c> points into the transient <c>/tmp/.mount_*</c> squashfs, which
+    /// vanishes when the launcher exits — a marker to it would be a dead path by the time the game reads it.
+    /// The real, persistent file is the .AppImage the runtime records in the <c>APPIMAGE</c> env var, so that
+    /// wins when present. The game <c>Process.Start</c>s the marker path directly; an .AppImage is an ELF with
+    /// the exec bit, so it starts fine.</summary>
     internal static string? CurrentLauncherPath()
     {
-        try { return Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName; }
+        try
+        {
+            var proc = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+            return ResolveMarkerPath(Environment.GetEnvironmentVariable("APPIMAGE"), proc);
+        }
         catch { return null; }
     }
+
+    /// <summary>Pure marker-path decision: prefer the AppImage path (<c>APPIMAGE</c>) when set, else the
+    /// process/apphost path. Injectable inputs keep it unit-testable without a real AppImage mount.</summary>
+    internal static string? ResolveMarkerPath(string? appImageEnv, string? processPath)
+        => !string.IsNullOrWhiteSpace(appImageEnv) ? appImageEnv
+         : (!string.IsNullOrWhiteSpace(processPath) ? processPath : null);
 
     /// <summary>
     /// Writes/refreshes <see cref="MarkerFileName"/> in <paramref name="gameInstallDir"/> with this

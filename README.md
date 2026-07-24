@@ -18,7 +18,7 @@ Supported platforms:
 
 - Windows x64
 - macOS on Apple Silicon and Intel
-- Linux x64
+- Linux x64 — download the **`.AppImage`** (a single, double-clickable file with its own name and icon), or the `.zip` if you prefer a plain folder (run `./OpenSO.Launcher` inside it)
 
 Release builds are self-contained, so players do not need to install the .NET runtime separately.
 
